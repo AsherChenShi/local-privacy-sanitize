@@ -1,0 +1,96 @@
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / (name + ".py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+installer = load("install_skill")
+validator = load("validate_release")
+
+
+class PackageTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def test_repository_passes_structural_validation(self):
+        self.assertEqual(validator.validate(ROOT), [])
+
+    def test_install_only_curated_payload(self):
+        destination = self.root / "installed"
+        installer.install(ROOT, destination)
+        files = sorted(str(p.relative_to(destination)) for p in destination.rglob("*") if p.is_file())
+        self.assertEqual(files, sorted(installer.PAYLOAD))
+        for relative in installer.PAYLOAD:
+            self.assertEqual((ROOT / relative).read_bytes(), (destination / relative).read_bytes())
+
+    def test_install_does_not_replace_existing_skill(self):
+        destination = self.root / "installed"
+        destination.mkdir()
+        sentinel = destination / "SKILL.md"
+        sentinel.write_text("existing user instructions")
+        with self.assertRaises(FileExistsError):
+            installer.install(ROOT, destination)
+        self.assertEqual(sentinel.read_text(), "existing user instructions")
+
+    def test_invalid_payload_is_rejected_before_install(self):
+        destination = self.root / "installed"
+        with self.assertRaises(ValueError):
+            installer.install(self.root / "missing-source", destination)
+        self.assertFalse(destination.exists())
+
+    def copy_package(self):
+        destination = self.root / "source"
+        shutil.copytree(ROOT, destination, ignore=shutil.ignore_patterns(".git", "__pycache__", "out"))
+        return destination
+
+    def test_missing_reference_is_reported(self):
+        source = self.copy_package()
+        with (source / "SKILL.md").open("a") as stream:
+            stream.write("\n[missing](references/missing.md)\n")
+        self.assertIn("broken_local_documentation_link", validator.validate(source))
+
+    def test_network_dependency_is_rejected(self):
+        source = self.copy_package()
+        with (source / "scripts/sanitize.py").open("a") as stream:
+            stream.write("\nimport socket\n")
+        self.assertIn("unexpected_runtime_dependency", validator.validate(source))
+
+    def test_symlink_payload_is_rejected(self):
+        source = self.copy_package()
+        file = source / "SKILL.md"
+        content = self.root / "other.md"
+        content.write_bytes(file.read_bytes())
+        file.unlink()
+        file.symlink_to(content)
+        with self.assertRaises(ValueError):
+            installer.install(source, self.root / "installed")
+
+    def test_installed_payload_executes_without_repository(self):
+        destination = self.root / "installed"
+        installer.install(ROOT, destination)
+        source = self.root / "demo.txt"
+        source.write_text("demo@example.com")
+        run = subprocess.run([sys.executable, str(destination / "scripts/sanitize.py"),
+                              "sanitize", "--input", str(source), "--out-dir", str(self.root / "candidate")],
+                             capture_output=True, text=True, timeout=10, cwd=self.root)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(json.loads(run.stdout)["status"], "REVIEW_REQUIRED")
+
+
+if __name__ == "__main__":
+    unittest.main()

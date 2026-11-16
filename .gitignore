@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+.env
+.env.*
+private/
+raw/
+out/
+outputs/
+*.local.json
+*.local.txt

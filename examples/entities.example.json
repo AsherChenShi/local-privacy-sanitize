@@ -1,0 +1,9 @@
+{
+  "entities": [
+    {"type": "PERSON", "values": ["陈岚", "小陈"]},
+    {"type": "PERSON", "values": ["赵明"]},
+    {"type": "ORG", "values": ["示例星河公司"]},
+    {"type": "PROJECT", "values": ["示例云桥项目"]},
+    {"type": "LOCATION", "values": ["示例路88号"]}
+  ]
+}
