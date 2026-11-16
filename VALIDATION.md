@@ -4,7 +4,7 @@
 
 ## 已完成
 
-- macOS、Python 3.9.6：`python3 -m unittest discover -s tests -v`，59 项通过。
+- macOS、Python 3.9.6：`python3 -m unittest discover -s tests -v`，60 项通过（含新增的 CI 运行环境回归检查）。
 - skill-creator `quick_validate.py`：通过。
 - `python3 scripts/validate_release.py`：通过，检查包结构、本地文档链接、元数据、私有运行产物忽略规则与运行时代码依赖。
 - `python3 -m compileall -q -b scripts tests`：通过。
@@ -15,8 +15,10 @@
 
 ## 解释与限制
 
-59 项测试通过说明这些用例中的预期行为成立，不代表真实数据的召回率为 100%。已设置负向用例，明确验证未配置姓名可以保留，同时结果始终是 REVIEW_REQUIRED。
+60 项测试通过说明这些用例中的预期行为成立，不代表真实数据的召回率为 100%。已设置负向用例，明确验证未配置姓名可以保留，同时结果始终是 REVIEW_REQUIRED。
 
 示例输出通过已知规则复检，仍需本地复核。共享规则复检不能发现同一规则集遗漏的未知类型。语义验证覆盖示例中的事实与关系，不是对任意自然语言的语义等价证明。
 
-GitHub Actions 配置了 Ubuntu 上 Python 3.9、3.12、3.14 的测试矩阵；本文记录本地结果，远端运行状态请查看仓库 Actions。未验证客户端出站拦截、操作系统完整隔离、真实个人材料、PDF/OCR/Office、多语言通用 NER 或未知凭据格式。
+GitHub Actions 的首次运行中，Python 3.12 与 3.14 通过，Python 3.9 在安装环境阶段失败：ubuntu-latest 已切换至 Ubuntu 26.04，而该版本没有 Python 3.9 安装包。依据 [actions/python-versions 官方清单](https://github.com/actions/python-versions/blob/main/versions-manifest.json)，已将 Python 3.9 固定为 Ubuntu 24.04，将 3.12/3.14 固定为 Ubuntu 26.04，保留全部测试及校验步骤，并新增兼容性回归检查。
+
+远端最新运行状态请查看仓库 Actions。未验证客户端出站拦截、操作系统完整隔离、真实个人材料、PDF/OCR/Office、多语言通用 NER 或未知凭据格式。

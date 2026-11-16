@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,19 @@ class PackageTests(unittest.TestCase):
 
     def test_repository_passes_structural_validation(self):
         self.assertEqual(validator.validate(ROOT), [])
+
+    def test_ci_preserves_supported_python_versions_on_available_runners(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        # JSON flow mappings are valid YAML. Compatibility comes from the
+        # actions/python-versions manifest checked on 2026-11-16, not latest.
+        available = {"3.9": {"ubuntu-22.04", "ubuntu-24.04"},
+                     "3.12": {"ubuntu-22.04", "ubuntu-24.04", "ubuntu-26.04"},
+                     "3.14": {"ubuntu-22.04", "ubuntu-24.04", "ubuntu-26.04"}}
+        rows = [json.loads(row) for row in re.findall(r"^\s+- (\{.*\})$", workflow, re.M)]
+        self.assertEqual({row["python-version"] for row in rows}, set(available))
+        for row in rows:
+            self.assertIn(row["os"], available[row["python-version"]])
+        self.assertIn("runs-on: ${{ matrix.os }}", workflow)
 
     def test_install_only_curated_payload(self):
         destination = self.root / "installed"
