@@ -2,7 +2,7 @@
 
 一个用于 Codex、Claude Code 等支持 `SKILL.md` 的 Agent 的本地脱敏 skill。使用 Python 标准库为文本生成**待本地复核**的副本，保留实体关系与关键事实。程序不调用网络或外部模型。
 
-**这是脱敏候选生成器，不是客户端上传拦截器。** 安装 skill 不会自动拦住聊天输入、工具返回、Memory 或附件上传。未配置的人名、商业秘密和组合身份线索仍可能保留。
+可选的 Codex Hooks 为文本提交和受支持的工具返回增加本地检查。是否开启由用户选择。未配置的人名、商业秘密和组合身份线索仍可能保留。
 
 支持 macOS/Linux、Python 3.9+、UTF-8 `.txt` / `.md` / `.log`，单文件不超过 2 MiB。所有仓库示例和测试数据均为虚构，不来自真实用户资料。
 
@@ -22,6 +22,28 @@ python3 scripts/install_skill.py --target claude
 ```
 
 安装器只复制明确列出的 skill 文件，不复制 Git 历史、测试、示例或用户数据。目标已存在时会停止，不覆盖已有配置。安装后如客户端未发现新技能，重新开启会话。Codex 可显式调用 `$local-privacy-sanitize`；其他宿主的发现与调用方式以其当前文档为准。
+
+## 在 Codex 中选择脱敏保护
+
+在本机终端的仓库目录运行以下命令。注册与 skill 安装相互独立，首次注册默认关闭。
+
+```sh
+python3 scripts/codex_privacy.py install  # 注册后先审核 Hooks
+python3 scripts/codex_privacy.py status  # 查看设置和注册状态
+python3 scripts/codex_privacy.py on      # 脱敏保护
+python3 scripts/codex_privacy.py off     # 不脱敏
+```
+
+注册后，在桌面端 **Settings → Hooks** 或 CLI 的 `/hooks` 审核并信任两个 `local-privacy-sanitize` Hook。客户端未显示定义时重新打开会话。模式影响同一配置目录下信任并运行这两个 Hook 的本地 Codex 会话。Hook 每次读取当前模式，切换对下一次触发有效。用终端切换，避免把关闭保护交给聊天中的指令。命令中的 `hooks_registered` 仅确认本项目的定义已登记，实际信任状态以 Codex 为准。
+
+| 用户选择 | 行为 |
+| --- | --- |
+| 脱敏保护（`on`） | `UserPromptSubmit` 在模型请求前检查用户文本，`PostToolUse` 检查受支持的工具结果。命中时阻断。用下方脱敏工具生成副本，在本地复核后重新提交。 |
+| 不脱敏（`off`） | 这两个 Hook 直接放行，Codex 按常规流程处理文本和工具结果。 |
+
+Hook 使用同一套检测规则，包括整条 URL 匹配。可在 Codex 配置目录下的 `local-privacy-sanitize/entities.local.json` 增加本地实体词典，格式见 [配置与安全边界](references/privacy-boundary.md)。默认配置目录是 `~/.codex`，设置了 `CODEX_HOME` 时使用其路径。注册保留已有的其他 Hook 定义，并引用当前仓库中的脚本绝对路径，请保留这个检出位置。关闭时只修改模式文件，其他 Hook 继续执行。
+
+Codex 暂未提供 `UserPromptSubmit` 原地替换提示词的接口。附件、截图、历史上下文、托管工具和未走这两个事件的其他路径需要独立处理。Hook 已启动但检查异常时会返回阻断，Hook 未信任、无法启动或被宿主跳过时需要从客户端核实实际行为。 [OpenAI Hooks 文档](https://learn.chatgpt.com/docs/hooks)
 
 ## 先运行虚构示例
 
@@ -68,7 +90,8 @@ python3 scripts/sanitize.py check \
 | 姓名、公司、地址、项目名 | 本地显式配置；同组别名共享占位符 |
 | 未配置姓名、特殊经历、商业秘密、组合再识别 | 不自动判断，必须复核或使用受控环境 |
 | PDF、图片、Office、音频 | 未支持，直接输入会被拒绝 |
-| 客户端全部出站流量 | 未拦截，需要另行部署控制 |
+| Codex 用户文本和受支持的工具返回 | 可选本地检查，命中后阻断并提示脱敏 |
+| 其他客户端出站流量 | 需要单独的控制措施 |
 
 同一文件内稳定替换，跨文件不进行身份关联。重叠范围合并以避免敏感尾部遗漏。归一化只用于检测，替换范围外的原文不变。原文已发送至云端时，本工具无法撤回这次传输。
 
@@ -80,6 +103,8 @@ python3 scripts/validate_release.py
 python3 -m compileall -q -b scripts tests
 git diff --check
 ```
+
+本机有 Codex CLI 时可运行 `python3 tests/codex_smoke.py`。它用临时配置和回环地址模拟模型服务，使用合成样本验证开启及关闭后的实际请求。
 
 测试验证合成样本下的预期行为，不代表真实中文资料达到某个召回率。check 与 sanitizer 共享检测规则，不是独立检测引擎。当前未验证客户端全链路拦截、真实敏感材料、未知格式凭据或通用语义等价。
 

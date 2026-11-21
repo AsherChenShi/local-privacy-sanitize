@@ -15,6 +15,7 @@ def validate(root):
         "scripts/sanitize.py", "scripts/install_skill.py", "scripts/validate_release.py",
         "references/privacy-boundary.md", "examples/entities.example.json",
         "examples/input.example.txt", "tests/test_sanitize.py", "tests/test_package.py",
+        "scripts/codex_privacy.py", "tests/test_codex_privacy.py", "tests/codex_smoke.py",
         ".github/workflows/ci.yml",
     )
     for relative in required:
