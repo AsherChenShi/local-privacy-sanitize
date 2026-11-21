@@ -101,6 +101,19 @@ class PrivacyHookTests(unittest.TestCase):
         self.assertEqual(self.control("install", want_success=False).returncode, 2)
         self.assertEqual(self.hooks.read_text(), "invalid user settings")
 
+    def test_status_does_not_create_or_open_a_write_lock(self):
+        self.assertEqual(json.loads(self.control("status").stdout),
+                         {"mode": "off", "hooks_registered": False})
+        self.assertEqual(list(self.config.iterdir()), [])
+        self.control("install")
+        lock = self.state.with_name("lock")
+        lock.unlink()
+        self.assertEqual(json.loads(self.control("status").stdout),
+                         {"mode": "off", "hooks_registered": True})
+        self.assertFalse(lock.exists())
+        self.state.unlink()
+        self.assertEqual(self.control("status", want_success=False).returncode, 2)
+
     def test_user_modified_privacy_hook_is_not_overwritten(self):
         self.control("install")
         hooks = json.loads(self.hooks.read_text())

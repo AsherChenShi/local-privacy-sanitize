@@ -98,11 +98,13 @@ def registration(config_dir, want_install):
 
 def configure(config_dir, action):
     state = mode_file(config_dir)
-    if action == "status" and not state.parent.exists():
-        return {"mode": "off", "hooks_registered": False}
-    state.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if state.parent.is_symlink():
         raise ValueError("symlink state directory")
+    if action == "status":
+        _, _, registered = registration(config_dir, False)
+        mode = load_mode(state) if registered or os.path.lexists(state) else "off"
+        return {"mode": mode, "hooks_registered": registered}
+    state.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
     fd = os.open(state.parent / "lock", flags, 0o600)
     with os.fdopen(fd, "r+b") as lock:
@@ -118,14 +120,12 @@ def configure(config_dir, action):
             mode = load_mode(state)
             if added:
                 write_json(config_dir / "hooks.json", document)
-        elif action == "on":
+        else:  # on
             if not registered:
                 raise ValueError("install first")
             read_entities(state)
             mode = "on"
             write_json(state, {"mode": mode})
-        else:
-            mode = load_mode(state) if os.path.lexists(state) else "off"
         return {"mode": mode, "hooks_registered": registered}
 
 
