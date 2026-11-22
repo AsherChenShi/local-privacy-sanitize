@@ -1,12 +1,12 @@
 # local-privacy-sanitize
 
-一个用于 Codex、Claude Code 等支持 `SKILL.md` 的 Agent 的本地脱敏 skill。使用 Python 标准库为文本生成**待本地复核**的副本，保留实体关系与关键事实。程序不调用网络或外部模型。
+[English](README.en.md)
 
-可选的 Codex Hooks 为文本提交和受支持的工具返回增加本地检查。是否开启由用户选择。未配置的人名、商业秘密和组合身份线索仍可能保留。
+为 Codex 和 Claude Code 提供本地文本脱敏与可选的桌面插件开关。文件工具用 Python 标准库生成**待本地复核**的副本，保留实体关系与关键事实。两个插件可检查即将提交的文字和各宿主支持的工具结果。检测程序不调用网络或外部模型。
 
 支持 macOS/Linux、Python 3.9+、UTF-8 `.txt` / `.md` / `.log`，单文件不超过 2 MiB。所有仓库示例和测试数据均为虚构，不来自真实用户资料。
 
-## 安装
+## 安装文件脱敏 skill
 
 ```bash
 git clone https://github.com/AsherChenShi/local-privacy-sanitize.git
@@ -35,7 +35,26 @@ python3 scripts/install_skill.py --target claude
 
 如果以前启用了终端版，请先用 `python3 scripts/codex_privacy.py off` 关闭旧模式，避免两套配置同时检测。插件开关与旧版模式文件独立。两种接入共用可选的本地实体词典。 [OpenAI 本地插件说明](https://developers.openai.com/plugins/build/plugins#how-local-marketplaces-work)
 
-## 终端切换方式
+## 在 Claude Code 桌面界面切换
+
+需要能启动本地 Code 会话的 Claude Code 2.1.295 或更新版本，且宿主支持 `updatedToolOutput`。文件脱敏 skill 与此插件分别安装。
+
+如果桌面端 **Code** 标签页只显示「获取 Claude Code」，请先确认账号可以启动本地 Code 会话。本机 Free 账号只能看到这个入口。
+
+`onFailure: "block"` 用于提示词检查出错时拒绝提交。工具结果只有在 Hook 成功返回且 Claude 接受替换值时才会被替换。若工具检查异常退出、超时或宿主拒绝替换，原结果仍可能进入上下文。
+
+1. 在仓库根目录运行 `python3 scripts/build_claude_plugin.py outputs/claude-privacy-desktop`。脚本生成本地插件目录和同名 ZIP。收到 ZIP 时直接解压即可。
+2. 在 Claude 桌面端打开 **Code**，开始一个 **Local** 会话，并选中仓库目录。在会话里输入 `/plugin marketplace add ./outputs/claude-privacy-desktop`。如果解压到了其他目录，使用该目录的实际路径。也可在一次性的终端设置中运行 `claude plugin marketplace add ./outputs/claude-privacy-desktop`。
+3. 选择输入框旁的 **+ → Add plugins**，或 **+ → Plugins → Browse plugins**，找到 `claude-privacy`（`claude-privacy@local-privacy-tools`）并安装，按需要选择用户或项目范围。也可在 Claude Code 会话输入 `/plugin install claude-privacy@local-privacy-tools`。
+4. 之后在桌面端 **+ → Plugins → Manage plugins**，或本地会话侧栏的 **Customize / Plugins**，启用或禁用该插件。切换后新开一个本地 Code 会话确认。CLI 会话也可用 `/plugin` 的 **Installed** 标签页切换。该入口需要账号能够启动 Claude Code 会话，具体以桌面 **Code** 标签页显示为准。
+
+启用后，`UserPromptSubmit` 拒绝命中规则的提示词。`PostToolUse` 替换命中的 Bash 和受支持的 MCP 返回，后续模型请求收到的是替换后的结果。需要发送原文的改写版时，先用下方文件工具在本机生成并复核副本。禁用插件后，Claude Code 按常规流程处理。
+
+可在 `~/.claude/local-privacy-sanitize/entities.local.json` 添加本地实体词典。设置了 `CLAUDE_CONFIG_DIR` 时，从该目录下的同一相对路径读取。格式见 [配置与安全边界](references/privacy-boundary.md)。
+
+测试切换时，只使用虚构数据。分别启用、禁用插件，各开一个新会话并发送 `只回复 TEST_OK。测试邮箱是 desktop-test@example.invalid`。启用时应被拒绝，禁用时应能正常收到回复。客户端必须实际加载插件和 Hooks，才能依赖这项检查。[Claude Code 桌面插件](https://code.claude.com/docs/en/desktop#install-plugins) · [Claude Code Hooks](https://code.claude.com/docs/en/hooks#posttooluse-decision-control)
+
+## Codex 终端切换方式
 
 在本机终端的仓库目录运行以下命令。注册与 skill 安装相互独立，首次注册默认关闭。
 
@@ -103,9 +122,12 @@ python3 scripts/sanitize.py check \
 | 未配置姓名、特殊经历、商业秘密、组合再识别 | 不自动判断，必须复核或使用受控环境 |
 | PDF、图片、Office、音频 | 未支持，直接输入会被拒绝 |
 | Codex 用户文本和受支持的工具返回 | 可选本地检查，命中后阻断并提示脱敏 |
+| Claude Code 用户文本、Bash 和受支持的 MCP 返回 | 拦截命中的提示词，替换命中的工具结果 |
 | 其他客户端出站流量 | 需要单独的控制措施 |
 
 同一文件内稳定替换，跨文件不进行身份关联。重叠范围合并以避免敏感尾部遗漏。归一化只用于检测，替换范围外的原文不变。原文已发送至云端时，本工具无法撤回这次传输。
+
+两种插件都按规则匹配整条 URL，包括公开链接。Claude Code 的结果替换只发生在工具执行后，已经执行的命令、先前发出的网络请求和在 Hook 前记录的遥测不受影响。Hook 未加载、工具结果格式不受支持、附件、历史上下文和未覆盖的工具路径仍需单独处理。
 
 ## 开发与验证
 

@@ -10,10 +10,7 @@ import shlex
 import sys
 import tempfile
 
-from sanitize import (
-    MAX_BYTES, MAX_POLICY_BYTES, PLACEHOLDER, Rejected, find_matches, normalize,
-    parse_policy, read_local,
-)
+from sanitize import MAX_BYTES, MAX_POLICY_BYTES, Rejected, parse_policy, read_local, scan_value
 
 
 EVENT_FIELDS = {"UserPromptSubmit": "prompt", "PostToolUse": "tool_response"}
@@ -134,22 +131,6 @@ def read_entities(state):
     if os.path.lexists(path):
         return parse_policy(read_local(path, MAX_POLICY_BYTES, {".json"}))
     return ()
-
-
-def scan_value(value, entities):
-    if isinstance(value, dict):
-        # Encoded tool media needs a detector that understands its format.
-        if value.get("type") in ("image", "audio", "resource"):
-            raise ValueError("unsupported tool content")
-        return any(scan_value(key, entities) or scan_value(child, entities)
-                   for key, child in value.items())
-    if isinstance(value, list):
-        return any(scan_value(child, entities) for child in value)
-    if value is None or isinstance(value, bool):
-        return False
-    text, _ = normalize(str(value))
-    candidate = PLACEHOLDER.sub(lambda match: " " * len(match.group()), text)
-    return bool(find_matches(candidate, entities))
 
 
 def block(reason):

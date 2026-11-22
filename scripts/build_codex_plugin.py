@@ -16,14 +16,14 @@ FILES = {
 }
 
 
-def build(destination):
+def build(destination, files=FILES):
     destination.mkdir(parents=True)
-    for target, source in FILES.items():
+    for target, source in files.items():
         path = destination / target
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes((ROOT / source).read_bytes())
     with zipfile.ZipFile(destination.with_suffix(".zip"), "x", zipfile.ZIP_DEFLATED) as archive:
-        for target in FILES:
+        for target in files:
             archive.write(destination / target, str(Path(destination.name) / target))
 
 

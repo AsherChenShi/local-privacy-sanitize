@@ -1,0 +1,47 @@
+{
+  "description": "Offline privacy checks for Claude Code",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["-E", "-S", "${CLAUDE_PLUGIN_ROOT}/scripts/claude_privacy.py", "UserPromptSubmit"],
+            "timeout": 10,
+            "onFailure": "block",
+            "statusMessage": "Checking the prompt locally"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["-E", "-S", "${CLAUDE_PLUGIN_ROOT}/scripts/claude_privacy.py", "PostToolUse", "bash"],
+            "timeout": 10,
+            "onFailure": "block",
+            "statusMessage": "Checking the Bash result locally"
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["-E", "-S", "${CLAUDE_PLUGIN_ROOT}/scripts/claude_privacy.py", "PostToolUse", "mcp"],
+            "timeout": 10,
+            "onFailure": "block",
+            "statusMessage": "Checking the MCP result locally"
+          }
+        ]
+      }
+    ]
+  }
+}

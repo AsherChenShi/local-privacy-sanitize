@@ -11,13 +11,16 @@ def validate(root):
     errors = []
     root = Path(root)
     required = (
-        "SKILL.md", "README.md", "agents/openai.yaml", ".gitignore",
+        "SKILL.md", "README.md", "README.en.md", "agents/openai.yaml", ".gitignore",
         "scripts/sanitize.py", "scripts/install_skill.py", "scripts/validate_release.py",
         "references/privacy-boundary.md", "examples/entities.example.json",
         "examples/input.example.txt", "tests/test_sanitize.py", "tests/test_package.py",
         "scripts/codex_privacy.py", "tests/test_codex_privacy.py", "tests/codex_smoke.py",
         "scripts/build_codex_plugin.py", "tests/test_desktop_plugin.py",
         "desktop/marketplace.json", "desktop/plugin.json", "desktop/hooks.json",
+        "scripts/claude_privacy.py", "scripts/build_claude_plugin.py",
+        "claude-desktop/marketplace.json", "claude-desktop/plugin.json", "claude-desktop/hooks.json",
+        "tests/test_claude_plugin.py", "tests/claude_smoke.py",
         ".github/workflows/ci.yml",
     )
     for relative in required:
@@ -31,7 +34,7 @@ def validate(root):
         errors.append("invalid_frontmatter")
     if "[TODO:" in skill:
         errors.append("unfinished_scaffold")
-    for relative in ("README.md", "SKILL.md", "references/privacy-boundary.md"):
+    for relative in ("README.md", "README.en.md", "SKILL.md", "references/privacy-boundary.md"):
         content = (root / relative).read_text(encoding="utf-8")
         for link in re.findall(r"\[[^\]]+\]\(([^)]+)\)", content):
             if "://" not in link and not link.startswith("#"):
@@ -58,20 +61,19 @@ def validate(root):
     ignored = (root / ".gitignore").read_text().splitlines()
     if not {"private/", "raw/", "out/", "*.local.json", "*.local.txt", ".env"}.issubset(ignored):
         errors.append("missing_private_artifact_ignores")
-    source = (root / "scripts/sanitize.py").read_text(encoding="utf-8")
-    tree = ast.parse(source)
     allowed = {"__future__", "argparse", "collections", "dataclasses", "hashlib", "ipaddress",
-               "json", "os", "pathlib", "re", "stat", "sys", "unicodedata"}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            if any(alias.name.split(".")[0] not in allowed for alias in node.names):
+               "json", "os", "pathlib", "re", "stat", "sys", "unicodedata", "sanitize"}
+    for relative in ("scripts/sanitize.py", "scripts/claude_privacy.py"):
+        source = (root / relative).read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import) and any(alias.name.split(".")[0] not in allowed for alias in node.names):
                 errors.append("unexpected_runtime_dependency")
-        if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] not in allowed:
-            errors.append("unexpected_runtime_dependency")
-        if isinstance(node, ast.Call):
-            name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-            if name in {"system", "popen", "eval", "exec", "__import__"}:
-                errors.append("dynamic_or_external_execution")
+            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] not in allowed:
+                errors.append("unexpected_runtime_dependency")
+            if isinstance(node, ast.Call):
+                name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+                if name in {"system", "popen", "eval", "exec", "__import__"}:
+                    errors.append("dynamic_or_external_execution")
     json.loads((root / "examples/entities.example.json").read_text(encoding="utf-8"))
     return errors
 

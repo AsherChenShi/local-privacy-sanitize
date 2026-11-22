@@ -1,0 +1,16 @@
+{
+  "name": "local-privacy-tools",
+  "owner": {
+    "name": "Local Privacy Tools"
+  },
+  "metadata": {
+    "description": "Offline privacy checks for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "claude-privacy",
+      "source": "./plugins/claude-privacy",
+      "description": "Check prompts and supported tool results before they reach Claude."
+    }
+  ]
+}

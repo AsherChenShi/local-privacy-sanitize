@@ -262,6 +262,22 @@ def sanitize(text: str, entities: tuple[Entity, ...] = ()) -> tuple[str, dict]:
     return output, report
 
 
+def scan_value(value, entities=()):
+    """Check text in a JSON value for known matches without exposing the value."""
+    if isinstance(value, dict):
+        if value.get("type") in ("image", "audio", "resource"):
+            raise ValueError("unsupported tool content")
+        return any(scan_value(key, entities) or scan_value(child, entities)
+                   for key, child in value.items())
+    if isinstance(value, list):
+        return any(scan_value(child, entities) for child in value)
+    if value is None or isinstance(value, bool):
+        return False
+    text, _ = normalize(str(value))
+    candidate = PLACEHOLDER.sub(lambda match: " " * len(match.group()), text)
+    return bool(find_matches(candidate, entities))
+
+
 def read_local(path: Path, limit: int, suffixes: set[str]) -> str:
     if path.suffix.lower() not in suffixes:
         raise Rejected("UNSUPPORTED_FILE_TYPE")
