@@ -12,6 +12,8 @@ PAYLOAD = (
     "agents/openai.yaml",
     "scripts/sanitize.py",
     "scripts/structured_redaction.py",
+    "scripts/review_policy.py",
+    "scripts/review_preview.py",
     "references/privacy-boundary.md",
     "references/architecture.md",
 )

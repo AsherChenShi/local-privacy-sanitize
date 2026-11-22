@@ -16,9 +16,9 @@ import sys
 import unicodedata
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from structured_redaction import StructureError, json_parts, markdown_parts, markdown_text, splice
+from structured_redaction import StructureError, json_parts, json_string_offsets, markdown_parts, markdown_text, splice
 
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 MAX_BYTES = 2 * 1024 * 1024
 MAX_POLICY_BYTES = 256 * 1024
 MAX_MATCHES = 20000
@@ -46,6 +46,43 @@ class Match:
     kind: str
     identity: str
     priority: int = 0
+
+
+@dataclass(frozen=True)
+class PreviewEdit:
+    source_start: int
+    source_end: int
+    candidate_start: int
+    candidate_end: int
+    kind: str
+    marker: str
+
+    def shifted(self, source_offset, candidate_offset):
+        return PreviewEdit(self.source_start + source_offset, self.source_end + source_offset,
+                           self.candidate_start + candidate_offset, self.candidate_end + candidate_offset,
+                           self.kind, self.marker)
+
+    def json_encoded(self, source_offsets, candidate_offsets):
+        return PreviewEdit(source_offsets[self.source_start], source_offsets[self.source_end],
+                           candidate_offsets[self.candidate_start], candidate_offsets[self.candidate_end],
+                           self.kind, self.marker)
+
+
+def preview_rows(source, edits):
+    """Serialize only known category markers and physical document locations."""
+    line_endings = iter(re.finditer(r"\r\n|\r|\n", source))
+    line_break = next(line_endings, None)
+    line, line_start = 1, 0
+    rows = []
+    for edit in edits:
+        while line_break and line_break.end() <= edit.source_start:
+            line += 1
+            line_start = line_break.end()
+            line_break = next(line_endings, None)
+        rows.append({"line": line, "column": edit.source_start - line_start + 1,
+                     "start": edit.candidate_start, "end": edit.candidate_end,
+                     "kind": edit.kind, "marker": edit.marker})
+    return rows
 
 
 def normalize(text: str, positions: list[int] | None = None) -> tuple[str, dict]:
@@ -484,20 +521,28 @@ class Redaction:
             raise Rejected("RESERVED_PLACEHOLDER_IN_INPUT")
         return find_matches(text, self.entities)
 
-    def text(self, original, *, preserve_lines=False):
+    def text(self, original, *, preserve_lines=False, edits=None):
         positions = []
         text, _ = normalize(original, positions)
         replacements = []
+        displacement = 0
         for match in _merge_overlaps(self.matches(text), text):
             start, end = positions[match.start], positions[match.end - 1] + 1
             if preserve_lines and any(char in original[start:end] for char in "\r\n"):
                 raise Rejected("AMBIGUOUS_MARKDOWN_RANGE")
-            replacements.append((start, end, self.replacement(match.kind, match.identity)))
+            marker = self.replacement(match.kind, match.identity)
+            replacements.append((start, end, marker))
+            if edits is not None:
+                candidate_start = start + displacement
+                edits.append(PreviewEdit(start, end, candidate_start, candidate_start + len(marker),
+                                         match.kind, marker))
+                displacement += len(marker) - (end - start)
         return splice(original, replacements)
 
-    def json(self, source):
+    def json(self, source, *, edits=None):
         parts, shape = json_parts(source)
         replacements = []
+        displacement = 0
         for part in parts:
             value, _ = normalize(part.value)
             field = part.field is not None and SECRET_FIELD.fullmatch(normalize(part.field)[0].strip())
@@ -510,32 +555,47 @@ class Redaction:
             else:
                 if not self.allow_placeholders and PLACEHOLDER.search(value):
                     raise Rejected("RESERVED_PLACEHOLDER_IN_INPUT")
+                changes = [] if edits is not None else None
                 if field and credential_value_present(part.value):
                     replacement = self.replacement("SECRET", value)
+                    if changes is not None:
+                        changes.append(PreviewEdit(0, len(part.value), 0, len(replacement), "SECRET", replacement))
                 else:
-                    replacement = self.text(part.value)
+                    replacement = self.text(part.value, edits=changes)
                 if replacement != part.value:
-                    replacements.append((part.start, part.end, json.dumps(replacement, ensure_ascii=False)))
+                    encoded = json.dumps(replacement, ensure_ascii=False)
+                    replacements.append((part.start, part.end, encoded))
+                    if edits is not None:
+                        source_offsets = json_string_offsets(source[part.start:part.end], part.value)
+                        candidate_offsets = json_string_offsets(encoded, replacement)
+                        edits.extend(change.json_encoded(source_offsets, candidate_offsets).shifted(
+                            part.start, part.start + displacement) for change in changes)
+                        displacement += len(encoded) - (part.end - part.start)
         output = splice(source, replacements)
         if replacements and json_parts(output)[1] != shape:
             raise Rejected("JSON_STRUCTURE_CHANGED")
         return output
 
-    def markdown(self, source):
+    def markdown(self, source, *, edits=None):
         parts, shape = markdown_parts(source)
         replacements = []
+        displacement = 0
         for part in parts:
             original = source[part.start:part.end]
+            changes = [] if edits is not None else None
             if part.kind == "json":
-                updated = self.json(original)
+                updated = self.json(original, edits=changes)
             elif part.kind in ("link", "autolink"):
                 value, _ = normalize(markdown_text(original))
                 if self.matches(value):
-                    marker = self.replacement("URL", value)[1:-1]
+                    placeholder = self.replacement("URL", value)
+                    marker = placeholder[1:-1]
                     if part.kind == "autolink":
                         updated = f"redacted:{marker}"
                     else:
                         updated = f"#redacted-{marker.lower().replace('_', '-')}"
+                    if changes is not None:
+                        changes.append(PreviewEdit(0, len(original), 0, len(updated), "URL", placeholder))
                 else:
                     updated = original
             elif part.kind == "markup":
@@ -544,31 +604,34 @@ class Redaction:
                 updated = original
             else:
                 contents = original.rstrip(" \t")
-                updated = self.text(contents, preserve_lines=True) + original[len(contents):]
+                updated = self.text(contents, preserve_lines=True, edits=changes) + original[len(contents):]
                 if part.kind == "text":
                     rendered = markdown_text(updated)
                     if rendered != updated and self.matches(normalize(rendered)[0]):
                         raise Rejected("AMBIGUOUS_MARKDOWN_RANGE")
             if updated != original:
                 replacements.append((part.start, part.end, updated))
+                if edits is not None:
+                    edits.extend(change.shifted(part.start, part.start + displacement) for change in changes)
+                    displacement += len(updated) - (part.end - part.start)
         output = splice(source, replacements)
         if replacements and markdown_parts(output)[1] != shape:
             raise Rejected("MARKDOWN_STRUCTURE_CHANGED")
         return output
 
-    def run(self, source, format):
+    def run(self, source, format, *, edits=None):
         try:
-            return {"text": self.text, "json": self.json, "markdown": self.markdown}[format](source)
+            return {"text": self.text, "json": self.json, "markdown": self.markdown}[format](source, edits=edits)
         except StructureError as error:
             raise Rejected(str(error)) from None
 
 
-def sanitize(text: str, entities: tuple[Entity, ...] = (), *, format="text") -> tuple[str, dict]:
+def sanitize(text: str, entities: tuple[Entity, ...] = (), *, format="text", edits=None) -> tuple[str, dict]:
     normalized, changes = normalize(text)
     if PLACEHOLDER.search(normalized):
         raise Rejected("RESERVED_PLACEHOLDER_IN_INPUT")
     redaction = Redaction(entities)
-    output = redaction.run(text, format)
+    output = redaction.run(text, format, edits=edits)
     if format == "text":
         if scan_kind(output, entities):
             raise Rejected("RESIDUAL_KNOWN_MATCH")
@@ -670,7 +733,7 @@ def read_local(path: Path, limit: int, suffixes: set[str]) -> str:
         raise Rejected("UTF8_REQUIRED") from None
 
 
-def write_bundle(directory: Path, output: str, report: dict, *, format="text") -> None:
+def write_bundle(directory: Path, output: str, report: dict, *, format="text", preview=None) -> None:
     """Fresh directory only. Private permissions; exclusive, no-follow file opens."""
     os.mkdir(directory, mode=0o700)
     dir_fd = None
@@ -678,10 +741,13 @@ def write_bundle(directory: Path, output: str, report: dict, *, format="text") -
     try:
         dir_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                          | getattr(os, "O_NOFOLLOW", 0))
-        for name, content in (
+        files = [
             (ARTIFACTS[format], output),
             ("report.json", json.dumps(report, ensure_ascii=False, indent=2) + "\n"),
-        ):
+        ]
+        if preview is not None:
+            files.append(("review.html", preview))
+        for name, content in files:
             descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                                  | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=dir_fd)
             created.append(name)
@@ -708,6 +774,8 @@ def main(argv=None) -> int:
     parser.add_argument("command", choices=("sanitize", "check"))
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--policy", type=Path)
+    parser.add_argument("--review-policy", type=Path, help="Local ordinary sensitivity choices")
+    parser.add_argument("--preview", action="store_true", help="Write an offline review.html preview")
     parser.add_argument("--out-dir", type=Path)
     parser.add_argument("--format", choices=tuple(ARTIFACTS),
                         help="Explicit format for a .txt or .log file")
@@ -715,19 +783,39 @@ def main(argv=None) -> int:
         args = parser.parse_args(argv)
         if os.name != "posix":
             raise Rejected("UNSUPPORTED_PLATFORM")
-        if (args.command == "sanitize") != (args.out_dir is not None):
+        if (args.command == "sanitize") != (args.out_dir is not None) or (args.preview and args.command != "sanitize"):
             raise Rejected("INVALID_ARGUMENTS")
         entities = parse_policy(read_local(args.policy, MAX_POLICY_BYTES, {".json"})) if args.policy else ()
+        from review_policy import ORDINARY_TYPES, ReviewPolicyError, load_review_policy, select_entities
+
+        try:
+            ordinary_types = load_review_policy(args.review_policy, read_local=read_local)
+        except ReviewPolicyError:
+            raise Rejected("INVALID_REVIEW_POLICY") from None
+        entities = select_entities(entities, ordinary_types)
         source = read_local(args.input, MAX_BYTES, set(INPUT_FORMATS))
         inferred = INPUT_FORMATS[args.input.suffix.lower()]
         if args.format and inferred not in ("text", args.format):
             raise Rejected("FORMAT_EXTENSION_MISMATCH")
         format = args.format or inferred
         if args.command == "sanitize":
-            output, report = sanitize(source, entities, format=format)
-            write_bundle(args.out_dir, output, report, format=format)
-            print(json.dumps({"status": report["status"], "artifact": report["artifact"],
-                              "occurrences": report["occurrences"]}))
+            edits = [] if args.preview else None
+            output, report = sanitize(source, entities, format=format, edits=edits)
+            if ordinary_types != ORDINARY_TYPES:
+                report["ordinary_types"] = sorted(ordinary_types)
+            preview = None
+            if args.preview:
+                from review_policy import find_doubts
+                from review_preview import render_preview
+
+                preview = render_preview(preview_rows(source, edits), find_doubts(output, format),
+                                         report["output_sha256"], ordinary_types)
+            write_bundle(args.out_dir, output, report, format=format, preview=preview)
+            summary = {"status": report["status"], "artifact": report["artifact"],
+                       "occurrences": report["occurrences"]}
+            if preview is not None:
+                summary["preview"] = "review.html"
+            print(json.dumps(summary))
             return 0
         normalized, _ = normalize(source)
         if format == "text":

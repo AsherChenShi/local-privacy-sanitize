@@ -93,6 +93,8 @@ class ClaudePluginTests(unittest.TestCase):
             "plugins/claude-privacy/scripts/hook_supervisor.py",
             "plugins/claude-privacy/scripts/sanitize.py",
             "plugins/claude-privacy/scripts/structured_redaction.py",
+            "plugins/claude-privacy/scripts/review_policy.py",
+            "plugins/claude-privacy/scripts/review_preview.py",
             "plugins/claude-privacy/scripts/privacy_status.py",
         }
         with zipfile.ZipFile(self.marketplace.with_suffix(".zip")) as archive:

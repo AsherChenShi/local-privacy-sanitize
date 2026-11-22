@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 
 from hook_supervisor import emit_shape, emit_status, load_strict_json, read_hook_event, supervise
+from review_policy import hook_entities
 from sanitize import MAX_BYTES, MAX_POLICY_BYTES, parse_policy, read_local, scan_kind
 
 
@@ -28,7 +29,8 @@ def local_entities():
     policy = local_config() / "entities.local.json"
     if not os.path.lexists(policy):
         return ()
-    return parse_policy(read_local(policy, MAX_POLICY_BYTES, {".json"}))
+    entities = parse_policy(read_local(policy, MAX_POLICY_BYTES, {".json"}))
+    return hook_entities(entities, read_local=read_local)
 
 
 def check_protected_read(event):

@@ -120,6 +120,24 @@ python3 scripts/sanitize.py check --input out/request/sanitized.json
 
 JSON 只替换命中的字符串值，保留键、嵌套、数组顺序和未命中的数字。Markdown 保留受支持的行内链接、表格和代码围栏，标记为 `json` 的围栏使用同一套 JSON 处理。格式异常、无法可靠局部替换或复检失败时，程序拒绝生成候选。[格式与安全边界](references/privacy-boundary.md#结构化预检)
 
+### 本地差异预览
+
+在 `sanitize` 命令上加 `--preview`，再用浏览器打开输出目录中的 `review.html`。Codex 和 Claude Code 安装包都包含同一个预检工具。
+
+```bash
+mkdir -p out
+python3 scripts/sanitize.py sanitize --input private/request.json \
+  --out-dir out/request-preview --preview
+```
+
+页面按位置列出已替换的内容和待核对的疑点，可以按敏感级别或类型筛选。替换显示原文的行列，疑点显示候选的行列。需要上下文时，选中这次生成的 `sanitized.*`。页面先在浏览器本地校验文件的 SHA-256，再显示所选位置附近的内容。原文和候选正文都不写入 HTML 文件，页面可以离线打开。零条疑点只表示当前规则未提示。[预览与类型配置](references/privacy-boundary.md#本地预览和敏感级别)
+
+### 设置普通敏感类型
+
+本地预检会替换命中的高敏项目。姓名、组织、地点和项目这四类已配置的实体默认也会替换。如果有经判断可保留的类型，在 `~/.config/local-privacy-sanitize/review-policy.local.json` 写入要替换的普通类型。例如 `{"ordinary_types":["PERSON","LOCATION"]}` 会继续替换已配置的姓名和地点，保留仅按组织、项目类型命中的内容。保存一次即可供本地预检和两个已启用的 Hook 使用。普通聊天保持原有的放行或拦截流程。
+
+如果某次独立预检要使用另一份配置，在 `sanitize` 和 `check` 上均传入相同的 `--review-policy PATH`。该参数只覆盖本地命令，宿主仍读取共享配置。页面筛选只影响当前看到的条目。未选中替换的普通类型集中提示一次。[配置文件和高敏边界](references/privacy-boundary.md#本地预览和敏感级别)
+
 ## 先运行虚构示例
 
 ```bash

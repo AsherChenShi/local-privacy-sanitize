@@ -1,6 +1,6 @@
 {
   "name": "codex-privacy",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "在 Codex 本地检查提示词和受支持的工具结果，命中时拦截。",
   "interface": {
     "displayName": "脱敏保护",

@@ -16,6 +16,8 @@ FILES = {
     PLUGIN / "scripts/privacy_status.py": "scripts/privacy_status.py",
     PLUGIN / "scripts/hook_supervisor.py": "scripts/hook_supervisor.py",
     PLUGIN / "scripts/structured_redaction.py": "scripts/structured_redaction.py",
+    PLUGIN / "scripts/review_policy.py": "scripts/review_policy.py",
+    PLUGIN / "scripts/review_preview.py": "scripts/review_preview.py",
 }
 
 

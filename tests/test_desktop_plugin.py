@@ -67,6 +67,8 @@ class DesktopPluginTests(unittest.TestCase):
                 "marketplace/plugins/codex-privacy/scripts/privacy_status.py",
                 "marketplace/plugins/codex-privacy/scripts/hook_supervisor.py",
                 "marketplace/plugins/codex-privacy/scripts/structured_redaction.py",
+                "marketplace/plugins/codex-privacy/scripts/review_policy.py",
+                "marketplace/plugins/codex-privacy/scripts/review_preview.py",
             })
             for name in archive.namelist():
                 self.assertEqual(archive.read(name), (self.root / name).read_bytes())

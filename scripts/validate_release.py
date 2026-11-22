@@ -15,6 +15,8 @@ def validate(root):
         "scripts/sanitize.py", "scripts/install_skill.py", "scripts/validate_release.py",
         "scripts/hook_supervisor.py", "scripts/structured_redaction.py", "tests/hook_smoke_fixtures.py",
         "tests/test_structured_redaction.py", "tests/test_hook_supervisor.py", "references/architecture.md",
+        "scripts/review_policy.py", "scripts/review_preview.py", "tests/test_preview_integration.py",
+        "tests/test_review_policy.py", "tests/test_review_preview.py",
         "references/privacy-boundary.md", "examples/entities.example.json",
         "examples/input.example.txt", "tests/test_sanitize.py", "tests/test_package.py",
         "scripts/codex_privacy.py", "tests/test_codex_privacy.py", "tests/codex_smoke.py",
@@ -68,13 +70,16 @@ def validate(root):
         errors.append("missing_private_artifact_ignores")
     allowed = {"__future__", "argparse", "collections", "dataclasses", "hashlib", "ipaddress",
                "json", "os", "pathlib", "re", "stat", "sys", "tomllib", "unicodedata", "sanitize",
-               "hook_supervisor", "structured_redaction"}
+               "hook_supervisor", "structured_redaction", "review_policy", "review_preview"}
     extra_imports = {
         "scripts/hook_supervisor.py": {"selectors", "subprocess", "time"},
         "scripts/structured_redaction.py": {"bisect", "html"},
+        "scripts/review_policy.py": {"bisect"},
+        "scripts/review_preview.py": {"base64"},
     }
     for relative in ("scripts/sanitize.py", "scripts/claude_privacy.py", "scripts/privacy_status.py",
-                     "scripts/structured_redaction.py", "scripts/hook_supervisor.py"):
+                     "scripts/structured_redaction.py", "scripts/hook_supervisor.py",
+                     "scripts/review_policy.py", "scripts/review_preview.py"):
         allowed_imports = allowed | extra_imports.get(relative, set())
         source = (root / relative).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(source)):

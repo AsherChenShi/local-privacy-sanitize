@@ -103,6 +103,24 @@ JSON produces `sanitized.json`, Markdown produces `sanitized.md`, and `.txt` and
 
 JSON redaction replaces matching string values while preserving keys, nesting, array order, and unchanged number tokens. Markdown redaction preserves supported inline links, tables, and fences. Fences marked `json` use the same JSON processing. If the format is invalid, a match cannot be replaced reliably, or the candidate fails validation, the tool blocks candidate creation. [Format and privacy boundary](references/privacy-boundary.md#结构化预检)
 
+### Preview local changes
+
+Add `--preview` to `sanitize` and open `review.html` from the output directory in a browser. Both plugin bundles include the same preflight tool.
+
+```sh
+mkdir -p out
+python3 scripts/sanitize.py sanitize --input private/request.json \
+  --out-dir out/request-preview --preview
+```
+
+The page lists replacements and items to review. Filter replacements by sensitivity or type. Replacement locations refer to the original, and review item locations refer to the candidate. To see context, select the `sanitized.*` file from this run. The browser checks its SHA-256 locally before displaying the selected area. The generated HTML contains neither the original text nor the candidate body and works offline. Zero review items means the current rules raised no flags. [Preview and sensitivity configuration](references/privacy-boundary.md#本地预览和敏感级别)
+
+### Configure standard sensitivity categories
+
+The independent preflight redacts detected high-sensitivity matches. Configured people, organizations, locations, and projects are also redacted by default. To customize standard categories, save the types to redact in `~/.config/local-privacy-sanitize/review-policy.local.json`. For example, `{"ordinary_types":["PERSON","LOCATION"]}` redacts configured people and locations and keeps matches found only under organizations or projects. The preflight and both enabled hooks read this shared setting. Regular chats use the host's existing allow and block behavior.
+
+To use another policy for a single preflight, pass the same `--review-policy PATH` to `sanitize` and `check`. That argument applies to the CLI, and the hooks continue to use the shared policy. Preview filters only change the visible list. Retained standard categories are summarized once. [Policy file and high-sensitivity boundary](references/privacy-boundary.md#本地预览和敏感级别)
+
 ## Try the fictional file example
 
 ```sh

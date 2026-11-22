@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 from hook_supervisor import emit_shape, emit_status, read_hook_event, supervise
+from review_policy import hook_entities
 from sanitize import MAX_BYTES, MAX_POLICY_BYTES, Rejected, parse_policy, read_local, scan_kind
 
 
@@ -148,7 +149,8 @@ def check_hook(state, event, *, controlled_by_plugin=False):
         value = payload[EVENT_FIELDS[event]]
         if event == "UserPromptSubmit" and not isinstance(value, str):
             return "error"
-        return scan_kind(value, read_entities(state))
+        entities = hook_entities(read_entities(state), read_local=read_local)
+        return scan_kind(value, entities)
     except Exception:
         return "error"
 

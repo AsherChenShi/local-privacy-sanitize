@@ -100,10 +100,14 @@ class PackageTests(unittest.TestCase):
         source = self.root / "demo.txt"
         source.write_text("demo@example.com")
         run = subprocess.run([sys.executable, str(destination / "scripts/sanitize.py"),
-                              "sanitize", "--input", str(source), "--out-dir", str(self.root / "candidate")],
+                              "sanitize", "--input", str(source), "--out-dir", str(self.root / "candidate"),
+                              "--preview"],
                              capture_output=True, text=True, timeout=10, cwd=self.root)
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(json.loads(run.stdout)["status"], "REVIEW_REQUIRED")
+        preview = (self.root / "candidate/review.html").read_text(encoding="utf-8")
+        self.assertIn("[EMAIL_001]", preview)
+        self.assertNotIn("demo@example.com", preview)
 
 
 if __name__ == "__main__":

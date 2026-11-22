@@ -120,6 +120,28 @@ def json_parts(source):
     return JsonSpans(source).parse()
 
 
+def json_string_offsets(token, decoded):
+    """Map decoded character boundaries to source offsets in a parsed string."""
+    offsets = []
+    index = 1
+    end = len(token) - 1
+    while index < end:
+        offsets.append(index)
+        if token[index] != "\\":
+            index += 1
+        elif token[index + 1] != "u":
+            index += 2
+        else:
+            character = int(token[index + 2:index + 6], 16)
+            index += 6
+            if (0xD800 <= character <= 0xDBFF and token.startswith("\\u", index)
+                    and 0xDC00 <= int(token[index + 2:index + 6], 16) <= 0xDFFF):
+                index += 6
+    if len(offsets) != len(decoded) or index != end:
+        raise StructureError("JSON_POSITION_MAPPING_FAILED")
+    return offsets + [end]
+
+
 def pipes(line):
     indices = []
     escaped = False
