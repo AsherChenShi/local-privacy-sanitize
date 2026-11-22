@@ -52,6 +52,9 @@ class PrivacyStatusTests(unittest.TestCase):
         value = json.loads(report.stdout)
         self.assertEqual(value["host"], host)
         self.assertEqual(value["hook_execution"], "not_verified")
+        self.assertIn("未受保护", value["message_zh"])
+        self.assertIn("scripts/sanitize.py sanitize", value["local_preflight"])
+        self.protection = value["protection_status"]
         self.assertIn("?token=SYNTHETIC_ONLY", value["verification"]["expect_block"])
         self.assertNotIn("?token=", value["verification"]["expect_pass"])
         return value["local_configuration"]
@@ -80,6 +83,14 @@ enabled = true
             "configured_enabled": False, "trust": "recorded_unverified",
         })
         self.assertEqual(info["hooks"]["PostToolUse"], {"configured_enabled": True, "trust": "unverified"})
+
+    def test_codex_reports_hooks_off_and_does_not_assume_live_hooks_when_on(self):
+        for configured, expected in (("false", "not_protected"), ("true", "unverified")):
+            with self.subTest(configured=configured):
+                self.write("config/config.toml", f'[features]\nhooks = {configured}\n[plugins."{CODEX}"]\nenabled = true\n')
+                info = self.status("codex")
+                self.assertIs(info["hooks_feature_enabled"], configured == "true")
+                self.assertEqual(self.protection, expected)
 
     def test_codex_ignores_table_shaped_text_and_invalid_manifest_version(self):
         self.write("config/config.toml", f'''

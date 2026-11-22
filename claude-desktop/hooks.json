@@ -15,6 +15,21 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "^Read$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["-E", "-S", "${CLAUDE_PLUGIN_ROOT}/scripts/claude_privacy.py", "PreToolUse", "read"],
+            "timeout": 10,
+            "onFailure": "block",
+            "statusMessage": "Checking configured protected Read paths"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "^Bash$",
@@ -24,7 +39,6 @@
             "command": "python3",
             "args": ["-E", "-S", "${CLAUDE_PLUGIN_ROOT}/scripts/claude_privacy.py", "PostToolUse", "bash"],
             "timeout": 10,
-            "onFailure": "block",
             "statusMessage": "Checking the Bash result locally"
           }
         ]
@@ -37,8 +51,19 @@
             "command": "python3",
             "args": ["-E", "-S", "${CLAUDE_PLUGIN_ROOT}/scripts/claude_privacy.py", "PostToolUse", "mcp"],
             "timeout": 10,
-            "onFailure": "block",
             "statusMessage": "Checking the MCP result locally"
+          }
+        ]
+      },
+      {
+        "matcher": "^Read$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["-E", "-S", "${CLAUDE_PLUGIN_ROOT}/scripts/claude_privacy.py", "PostToolUse", "read"],
+            "timeout": 10,
+            "statusMessage": "Checking the Read text result locally"
           }
         ]
       }

@@ -90,7 +90,9 @@ class ClaudePluginTests(unittest.TestCase):
             "plugins/claude-privacy/.claude-plugin/plugin.json",
             "plugins/claude-privacy/hooks/hooks.json",
             "plugins/claude-privacy/scripts/claude_privacy.py",
+            "plugins/claude-privacy/scripts/hook_supervisor.py",
             "plugins/claude-privacy/scripts/sanitize.py",
+            "plugins/claude-privacy/scripts/structured_redaction.py",
             "plugins/claude-privacy/scripts/privacy_status.py",
         }
         with zipfile.ZipFile(self.marketplace.with_suffix(".zip")) as archive:
@@ -213,6 +215,56 @@ class ClaudePluginTests(unittest.TestCase):
                 output = self.tool_result("mcp__test__sample", {"content": [item]})
                 self.assertEqual(output["content"][0]["type"], "text")
                 self.assertNotIn("SYNTHETIC_", json.dumps(output))
+
+    def test_read_known_text_shape_filters_sensitive_and_allows_clean(self):
+        file = {"filePath": "test.txt", "numLines": 1, "startLine": 7, "totalLines": 9}
+        clean = {"type": "text", "file": {**file, "content": "a clean text file"}}
+        self.assertIsNone(self.tool_result("Read", clean))
+        output = self.tool_result("Read", {"type": "text", "file": {**file, "content": CANARY}})
+        self.assertEqual(output["type"], "text")
+        self.assertEqual(set(output["file"]), set(clean["file"]))
+        self.assertIn("Privacy check blocked", output["file"]["content"])
+        self.assertNotIn(CANARY, json.dumps(output))
+
+    def test_read_unknown_shape_warns_without_claiming_a_replacement(self):
+        payload = {"hook_event_name": "PostToolUse", "tool_name": "Read",
+                   "tool_response": {"type": "image", "bytes": "SYNTHETIC_ONLY"}}
+        output = self.invoke("PostToolUse", payload, tool_name="Read")
+        self.assertNotIn("hookSpecificOutput", output)
+        self.assertIn("replacement could not be verified", output["systemMessage"])
+        self.assertNotIn("SYNTHETIC_ONLY", json.dumps(output))
+
+    def test_opt_in_protected_read_roots_match_direct_path_and_symlink(self):
+        protected = self.root / "protected"
+        protected.mkdir()
+        child = protected / "file.txt"
+        child.write_text("synthetic content", encoding="utf-8")
+        alias = self.root / "alias"
+        alias.symlink_to(protected, target_is_directory=True)
+
+        def read(path):
+            return self.invoke("PreToolUse", {"hook_event_name": "PreToolUse", "tool_name": "Read",
+                                              "tool_input": {"file_path": str(path)}}, tool_name="Read")
+
+        self.assertIsNone(read(child))
+        policy = self.config_dir / "local-privacy-sanitize/protected_read_roots.local.json"
+        policy.parent.mkdir(parents=True)
+        policy.write_text(json.dumps({"roots": [str(protected)]}), encoding="utf-8")
+        self.assertIsNone(read(self.root / "protected-similar" / "file.txt"))
+        for candidate in (child, alias / child.name):
+            with self.subTest(candidate=candidate.name):
+                decision = read(candidate)["hookSpecificOutput"]
+                self.assertEqual(decision["permissionDecision"], "deny")
+                self.assertIn("configured protected path", decision["permissionDecisionReason"])
+
+    def test_unreadable_protected_read_policy_denies_read(self):
+        policy = self.config_dir / "local-privacy-sanitize/protected_read_roots.local.json"
+        policy.parent.mkdir(parents=True)
+        policy.write_text('{"roots":[],"roots":[]}', encoding="utf-8")
+        result = self.invoke("PreToolUse", {"hook_event_name": "PreToolUse", "tool_name": "Read",
+                                            "tool_input": {"file_path": str(self.root / "sample.txt")}},
+                             tool_name="Read")
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
 
 
 if __name__ == "__main__":

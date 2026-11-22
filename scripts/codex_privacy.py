@@ -10,13 +10,15 @@ import shlex
 import sys
 import tempfile
 
+from hook_supervisor import emit_shape, emit_status, read_hook_event, supervise
 from sanitize import MAX_BYTES, MAX_POLICY_BYTES, Rejected, parse_policy, read_local, scan_kind
 
 
 EVENT_FIELDS = {"UserPromptSubmit": "prompt", "PostToolUse": "tool_response"}
 HOOK_LABEL = "local-privacy-sanitize"
 BLOCK_MATCH = "检测到敏感信息。请在本地生成并复核脱敏副本，再重试。"
-BLOCK_ERROR = "本地隐私检查未完成。请检查隐私配置和输入格式，再重试。"
+BLOCK_ERROR = "本地隐私检查未完成。请使用独立的本地预检并复核后再提交。"
+BLOCK_TIMEOUT = "本地隐私检查超时。请使用独立的本地预检并复核后再提交。"
 STATE_DIR = "local-privacy-sanitize"
 
 
@@ -138,23 +140,30 @@ def block(reason):
     return 0  # Codex consumes structured hook decisions from successful processes.
 
 
-def run_hook(state, event, *, controlled_by_plugin=False):
+def check_hook(state, event, *, controlled_by_plugin=False):
     try:
         if not controlled_by_plugin and load_mode(state) == "off":
-            return 0
-        source = sys.stdin.buffer.read(MAX_BYTES + 1)
-        if len(source) > MAX_BYTES:
-            return block(BLOCK_ERROR)
-        payload = json.loads(source)
-        if payload["hook_event_name"] != event:
-            return block(BLOCK_ERROR)
+            return None
+        payload = read_hook_event(event, MAX_BYTES)
         value = payload[EVENT_FIELDS[event]]
         if event == "UserPromptSubmit" and not isinstance(value, str):
-            return block(BLOCK_ERROR)
-        kind = scan_kind(value, read_entities(state))
-        if kind:
-            return block(f"{BLOCK_MATCH} [{kind}]" if event == "UserPromptSubmit" else BLOCK_MATCH)
+            return "error"
+        return scan_kind(value, read_entities(state))
     except Exception:
+        return "error"
+
+
+def run_hook(config_dir, action, event, *, worker):
+    if worker:
+        emit_shape("prompt" if event == "UserPromptSubmit" else "tool")
+        emit_status(check_hook(mode_file(config_dir), event, controlled_by_plugin=action == "plugin-hook"))
+        return 0
+    verdict = supervise(__file__, ["--config-dir", str(config_dir), action, event])
+    if verdict.status == "match":
+        return block(f"{BLOCK_MATCH} [{verdict.kind}]" if event == "UserPromptSubmit" else BLOCK_MATCH)
+    if verdict.status == "timeout":
+        return block(BLOCK_TIMEOUT)
+    if verdict.status != "allow":
         return block(BLOCK_ERROR)
     return 0
 
@@ -165,12 +174,13 @@ def main():
                         default=Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex"))
     parser.add_argument("action", choices=("install", "on", "off", "status", "hook", "plugin-hook"))
     parser.add_argument("event", nargs="?", choices=tuple(EVENT_FIELDS))
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     config_dir = args.config_dir.expanduser().absolute()
     is_hook = args.action in ("hook", "plugin-hook")
     if is_hook and args.event:
-        return run_hook(mode_file(config_dir), args.event, controlled_by_plugin=args.action == "plugin-hook")
-    if is_hook or args.event:
+        return run_hook(config_dir, args.action, args.event, worker=args.worker)
+    if is_hook or args.event or args.worker:
         parser.error("event is required only for hook")
     try:
         print(json.dumps(configure(config_dir, args.action)))

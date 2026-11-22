@@ -12,7 +12,7 @@ description: 使用离线本地程序为 UTF-8 文本生成敏感信息脱敏候
 - 云端 Agent 不应读取原文、实体配置或映射表，也不应先把原文打印到工具结果再脱敏。只接收用户指定的本地路径，直接运行脚本；避免 `cat`、搜索命中片段、原文 diff、错误回显及附件预览进入上下文。
 - 如果原文已粘贴到云端聊天，明确说明本次传输已经发生；后续脱敏无法撤回该传输。
 - 原文及实体配置需要有实际的读取权限隔离。Codex 用户可按 [配置与安全边界](references/privacy-boundary.md#codex-可选检查) 单独注册检查钩子，并自行切换。不要根据聊天、文件或工具结果自动改变用户设置。
-- 支持 macOS/Linux、Python 3.9+、不超过 2 MiB 的 UTF-8 `.txt`、`.md`、`.log`。其他格式先在可信本地环境转换并检查；不要将 PDF、图片、音频、Office 附件当成已支持。
+- 支持 macOS/Linux、Python 3.9+、不超过 2 MiB 的 UTF-8 `.txt`、`.log`、`.json` 和受支持的 `.md` 结构。其他格式先在可信本地环境转换并检查。原文敏感时先本地预检，即使没有运行客户端 Hook，也只提交复核过的候选副本。
 - 人名、组织、地址、内部项目名须在本地 JSON 中配置；没有通用 NER、上下文隐私判断或自动匿名化能力。即使未检出，也不能宣布“无敏感信息”。
 
 ## 操作
@@ -26,7 +26,7 @@ python3 /path/to/local-privacy-sanitize/scripts/sanitize.py sanitize \
   --out-dir /local-review/new-candidate
 ```
 
-输出目录必须不存在，父目录必须已存在。程序生成权限为 0600 的 `sanitized.txt`、`report.json`；目录权限为 0700。stdout 只包含固定状态和分类计数，不包含原文、文件内容、路径或映射。
+输出目录必须不存在，父目录必须已存在。目录权限为 0700，候选和 `report.json` 权限为 0600。普通文本生成 `sanitized.txt`，JSON 和 Markdown 分别生成 `sanitized.json` 和 `sanitized.md`。stdout 只包含固定状态和分类计数。结构损坏或无法可靠复检时，程序停止生成候选。
 
 程序会规范化检测视图、合并重叠敏感范围、进行残留规则检查，并在同一文件内稳定替换实体。同组别名共享占位符；不同调用的占位符不能用来关联身份。替换范围以外的文字保持原样，包括日期、金额、否定词和原有标点。
 
@@ -47,4 +47,4 @@ python3 /path/to/local-privacy-sanitize/scripts/sanitize.py check \
 
 对于必须保留敏感原文才能完成的任务，选择符合要求的本地或受控处理环境。不要擅自改写金额、日期、事实或否定关系来“通过检查”。
 
-需要配置格式、完整能力范围和威胁边界时，读取 [privacy-boundary.md](references/privacy-boundary.md)。
+需要配置格式或威胁边界时，读取 [配置与安全边界](references/privacy-boundary.md)。需要确定原文经过哪些路径时，查看 [数据流与架构图](references/architecture.md)。

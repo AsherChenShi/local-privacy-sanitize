@@ -4,7 +4,7 @@
 
 为 Codex 和 Claude Code 提供本地文本脱敏与可选的桌面插件开关。文件工具用 Python 标准库生成**待本地复核**的副本，保留实体关系与关键事实。两个插件可检查即将提交的文字和各宿主支持的工具结果。检测程序不调用网络或外部模型。
 
-支持 macOS/Linux、Python 3.9+、UTF-8 `.txt` / `.md` / `.log`，单文件不超过 2 MiB。所有仓库示例和测试数据均为虚构，不来自真实用户资料。
+支持 macOS/Linux、Python 3.9+ 和 UTF-8 `.txt`、`.log`、`.json`、`.md` 文件，单文件不超过 2 MiB。所有仓库示例和测试数据均为虚构。[数据流和架构](references/architecture.md)
 
 ## 安装文件脱敏 skill
 
@@ -48,7 +48,9 @@ python3 scripts/install_skill.py --target claude
 3. 选择输入框旁的 **+ → Add plugins**，或 **+ → Plugins → Browse plugins**，找到 `claude-privacy`（`claude-privacy@local-privacy-tools`）并安装，按需要选择用户或项目范围。也可在 Claude Code 会话输入 `/plugin install claude-privacy@local-privacy-tools`。
 4. 之后在桌面端 **+ → Plugins → Manage plugins**，或本地会话侧栏的 **Customize / Plugins**，启用或禁用该插件。切换后新开一个本地 Code 会话确认。CLI 会话也可用 `/plugin` 的 **Installed** 标签页切换。该入口需要账号能够启动 Claude Code 会话，具体以桌面 **Code** 标签页显示为准。
 
-启用后，`UserPromptSubmit` 拒绝命中规则的提示词。`PostToolUse` 替换命中的 Bash 和受支持的 MCP 返回，后续模型请求收到的是替换后的结果。需要发送原文的改写版时，先用下方文件工具在本机生成并复核副本。禁用插件后，Claude Code 按常规流程处理。
+启用后，`UserPromptSubmit` 拒绝命中规则的提示词。`PostToolUse` 检查 Bash、内置 `Read` 的文本结果以及受支持的 MCP 返回。结果替换生效时，后续模型请求收到的是替换后的结果。需要发送原文的改写版时，可先在本机生成并复核副本。禁用插件后，Claude Code 按常规流程处理。
+
+如果需要阻止 Claude Code 用内置 `Read` 读取原文目录，可配置绝对路径。规则在读取前拒绝该目录及其子目录中的文件。Bash 和其他工具仍取决于各自的权限。[受保护目录配置](references/privacy-boundary.md#claude-code-内置-read-保护)
 
 可在 `~/.claude/local-privacy-sanitize/entities.local.json` 添加本地实体词典。设置了 `CLAUDE_CONFIG_DIR` 时，从该目录下的同一相对路径读取。格式见 [配置与安全边界](references/privacy-boundary.md)。
 
@@ -78,7 +80,9 @@ python3 scripts/privacy_status.py codex
 python3 scripts/privacy_status.py claude --project .
 ```
 
-检查结果分别列出本地安装记录或缓存版本、配置开关、可见的 Hook 设置和信任记录。Claude Code 可用 `--runtime-version` 传入客户端显示的版本，检查它是否达到文档要求的失败阻断版本。脚本不启动客户端、不修改配置。`hook_execution: not_verified` 表示尚需在新会话中实际验证。输出里的 `expect_pass` 和 `expect_block` 提供两条虚构测试提示词。
+检查结果分别列出本地安装记录或缓存版本、配置开关、可见的 Hook 设置和信任记录。Claude Code 可用 `--runtime-version` 传入客户端显示的版本，检查它是否达到文档要求的失败阻断版本。脚本不启动客户端、不修改配置。`protection_status: not_protected` 表示发现检查被禁用，`unverified` 表示配置记录不足以确认当前会话受保护。`hook_execution: not_verified` 表示尚需在新会话中用 `expect_pass` 和 `expect_block` 两条虚构提示词实际验证。未受保护或未验证时，使用输出中 `local_preflight` 提供的独立预检命令。
+
+Hook 已启动时，检查进程有 6 秒内部上限，宿主 Hook 超时仍为 10 秒。检查进程超时、崩溃或结果异常时，监督进程返回固定反馈。Codex 可能在 Hook 未运行或宿主先终止它时继续发送。这时应把该会话视为未受保护，敏感原文先走独立本地预检。Claude Code 的 `onFailure: "block"` 在支持的版本上可阻断已配置的提交前检查失效。工具执行后的隐私效果取决于宿主是否接受替换结果。[OpenAI Hooks 文档](https://learn.chatgpt.com/docs/hooks) · [Claude Code 失败处理](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails)
 
 ## Codex 终端切换方式
 
@@ -101,6 +105,20 @@ python3 scripts/codex_privacy.py off     # 不脱敏
 Hook 使用同一套检测规则，包括上面的链接检查。可在 Codex 配置目录下的 `local-privacy-sanitize/entities.local.json` 增加本地实体词典，格式见 [配置与安全边界](references/privacy-boundary.md)。默认配置目录是 `~/.codex`，设置了 `CODEX_HOME` 时使用其路径。注册保留已有的其他 Hook 定义，并引用当前仓库中的脚本绝对路径，请保留这个检出位置。关闭时只修改模式文件，其他 Hook 继续执行。
 
 Codex 暂未提供 `UserPromptSubmit` 原地替换提示词的接口。附件、截图、历史上下文、托管工具和未走这两个事件的其他路径需要独立处理。Hook 已启动但检查异常时会返回阻断，Hook 未信任、无法启动或被宿主跳过时需要从客户端核实实际行为。 [OpenAI Hooks 文档](https://learn.chatgpt.com/docs/hooks)
+
+## 独立本地预检
+
+在客户端之外处理敏感原文，无需启动宿主或打开 Hook。把原文和实体词典放在 Agent 无权读取的位置。下面的路径用于示范，请换成自己的本地路径。
+
+```bash
+mkdir -p out
+python3 scripts/sanitize.py sanitize --input private/request.json --out-dir out/request
+python3 scripts/sanitize.py check --input out/request/sanitized.json
+```
+
+`.json` 生成 `sanitized.json`，`.md` 生成 `sanitized.md`，`.txt` 和 `.log` 默认生成 `sanitized.txt`。如果把结构化内容暂存为 `.txt` 或 `.log`，可在生成时指定 `--format json` 或 `--format markdown`。在本地查看结果和 `report.json`，只向客户端提交复核后的候选。
+
+JSON 只替换命中的字符串值，保留键、嵌套、数组顺序和未命中的数字。Markdown 保留受支持的行内链接、表格和代码围栏，标记为 `json` 的围栏使用同一套 JSON 处理。格式异常、无法可靠局部替换或复检失败时，程序拒绝生成候选。[格式与安全边界](references/privacy-boundary.md#结构化预检)
 
 ## 先运行虚构示例
 
@@ -146,9 +164,10 @@ python3 scripts/sanitize.py check \
 | 部分凭据格式、带标签秘密、URL/连接串 | 识别敏感值和不符合放行条件的链接，命中的链接按整体替换 |
 | 姓名、公司、地址、项目名 | 本地显式配置；同组别名共享占位符 |
 | 未配置姓名、特殊经历、商业秘密、组合再识别 | 不自动判断，必须复核或使用受控环境 |
+| JSON、常见 Markdown 结构 | 本地按原格式生成候选并复检 |
 | PDF、图片、Office、音频 | 未支持，直接输入会被拒绝 |
 | Codex 用户文本和受支持的工具返回 | 可选本地检查，命中后阻断并提示脱敏 |
-| Claude Code 用户文本、Bash 和受支持的 MCP 返回 | 拦截命中的提示词，替换命中的工具结果 |
+| Claude Code 用户文本、Bash、内置 `Read` 文本结果和受支持的 MCP 返回 | 拦截命中的提示词或替换受支持的结果 |
 | 其他客户端出站流量 | 需要单独的控制措施 |
 
 同一文件内稳定替换，跨文件不进行身份关联。重叠范围合并以避免敏感尾部遗漏。归一化只用于检测，替换范围外的原文不变。原文已发送至云端时，本工具无法撤回这次传输。

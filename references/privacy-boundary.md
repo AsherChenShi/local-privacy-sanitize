@@ -20,11 +20,19 @@
 
 凭据规则识别部分 API token 前缀、JWT 形状、Bearer、常见中英文凭据标签，以及部分 PEM 私钥。引号包围的标签值整体替换，包括其中的空格；检测到不完整的私钥或带引号凭据会阻断。**这些是启发式规则，不是完整凭据检测器。** 未识别的提供商格式、其他语言、分行或编码后的秘密仍可能遗漏。
 
-JSON 结果中的明确凭据字段结合字段名和值检查。文件工具会在复检时拒绝含有残留凭据的候选，生成的副本以纯文本复核为目的。Claude Code 对无法检查的 MCP 内容类型返回替代内容。提示词拦截说明使用固定类别，宿主支持时请求隐藏被拦截的原文。宿主自己的历史记录仍需独立管理。[Claude Code 拦截反馈](https://code.claude.com/docs/en/hooks#what-a-blocked-prompt-leaves-behind)
+JSON 结果中的明确凭据字段结合字段名和值检查。文件工具会在复检时拒绝含有残留凭据的候选。Claude Code 对无法检查且结果结构已知的 MCP 结果返回替代内容。提示词拦截说明使用固定类别，宿主支持时请求隐藏被拦截的原文。宿主自己的历史记录仍需独立管理。[Claude Code 拦截反馈](https://code.claude.com/docs/en/hooks#what-a-blocked-prompt-leaves-behind)
 
 检测视图处理全角 ASCII 与部分零宽字符，匹配结果映射回原始文本，只替换相应范围。不要将其解释为全面 Unicode 混淆防护。双向控制符、NUL 等不支持的控制字符会阻断。过多匹配会阻断，以限制资源消耗。
 
 嵌套匹配取覆盖整个范围的规则；部分重叠取并集，使用 SENSITIVE 占位符，避免保留敏感范围的尾部。合并可能减少实体分类精度，须结合本地复核判断语义是否足够。
+
+## 结构化预检
+
+预检按文件后缀选择文本、JSON 或 Markdown。`.txt` 和 `.log` 可以用 `--format json` 或 `--format markdown` 明确指定结构化内容。候选文件使用对应后缀，按同一格式复检。
+
+JSON 只替换命中的字符串值。对象键、数组顺序、层级、未命中的值及其原始数字写法会保留。重复键、非法语法、敏感键名或命中后无法安全保留类型的值会阻断。业务字段 `type` 的普通字符串由 JSON 格式规则处理。
+
+Markdown 支持常见行内链接、表格和代码围栏。扫描时按可识别结构限制替换范围，保留周围语法。带 `json` 标记的围栏复用 JSON 预检。超出受支持范围的内容须在本地复核。解析失败、输出结构校验失败或仍有已知匹配时，程序拒绝生成候选。[JSON 规范](https://www.rfc-editor.org/rfc/rfc8259) · [GFM 规范](https://github.github.com/gfm/)
 
 ## 链接检查规则
 
@@ -63,6 +71,22 @@ skill 只提供工作流。用户输入、历史聊天、Memory、连接器、�
 仓库的 `scripts/codex_privacy.py` 提供 `install`、`status`、`on` 和 `off`。在本机终端运行。首次注册默认关闭，用户在 Codex 的 Hooks 设置中审核并信任定义，再按需开启。开启时本地检查提示词和支持的工具结果，命中后阻断。需脱敏时用文件工具生成副本，复核后再发送。Hook 本身只输出固定反馈，提示词和工具结果不会被该脚本记录到文件。
 
 这两个 Hook 覆盖 Codex 实际调用的 `UserPromptSubmit` 和 `PostToolUse` 事件。它们无法替代附件、历史上下文、托管工具的独立控制。工具执行后的阻断不能撤销已经发生的外部操作。模式开关由本机用户维护，具备同等读写权限的进程也能修改这些设置。
+
+## Hook 运行失败
+
+两个插件保留宿主侧 10 秒上限。监督进程启动后，把扫描交给独立进程并限制为 6 秒。超时、扫描进程异常退出或返回不合规结果时，按对应事件返回固定反馈。插件不把原文放入进程参数、检查日志或拦截理由中。
+
+宿主没有运行监督进程时，插件无法返回阻断决定。Codex 未信任、已停用或被宿主先终止的 Hook 可能无法阻止原生发送。此时应按未受保护处理。先在本机生成、复检并人工审阅候选副本，再提交。Claude Code 在支持的版本上可通过 `onFailure: "block"` 拦截已配置的提交前检查失效。工具执行后的结果替换需要宿主接受与原结果匹配的结构。[Codex Hook 信任](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks) · [Claude Code 故障处理](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails) · [Claude Code 结果替换](https://code.claude.com/docs/en/hooks#posttooluse-decision-control)
+
+## Claude Code 内置 Read 保护
+
+要在读取前拒绝内置 `Read` 打开指定目录内的文件，在 `~/.claude/local-privacy-sanitize/protected_read_roots.local.json` 保存目录清单。设置 `CLAUDE_CONFIG_DIR` 时，使用该目录下的相同相对路径。
+
+```json
+{"roots":["/absolute/path/to/private-material"]}
+```
+
+目录必须为绝对路径。检查会比较原始路径和解析符号链接后的路径。没有清单时，插件不新增目录拒绝规则。工具结果中的文本继续按 `PostToolUse` 检查。Bash、其他文件工具和并行程序需要各自的访问限制。[Claude Code 执行前检查](https://code.claude.com/docs/en/hooks#pretooluse-decision-control)
 
 ## 报告解释
 

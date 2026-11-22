@@ -13,6 +13,8 @@ def validate(root):
     required = (
         "SKILL.md", "README.md", "README.en.md", "agents/openai.yaml", ".gitignore",
         "scripts/sanitize.py", "scripts/install_skill.py", "scripts/validate_release.py",
+        "scripts/hook_supervisor.py", "scripts/structured_redaction.py", "tests/hook_smoke_fixtures.py",
+        "tests/test_structured_redaction.py", "tests/test_hook_supervisor.py", "references/architecture.md",
         "references/privacy-boundary.md", "examples/entities.example.json",
         "examples/input.example.txt", "tests/test_sanitize.py", "tests/test_package.py",
         "scripts/codex_privacy.py", "tests/test_codex_privacy.py", "tests/codex_smoke.py",
@@ -36,7 +38,8 @@ def validate(root):
         errors.append("invalid_frontmatter")
     if "[TODO:" in skill:
         errors.append("unfinished_scaffold")
-    for relative in ("README.md", "README.en.md", "SKILL.md", "references/privacy-boundary.md"):
+    for relative in ("README.md", "README.en.md", "SKILL.md",
+                     "references/privacy-boundary.md", "references/architecture.md"):
         content = (root / relative).read_text(encoding="utf-8")
         for link in re.findall(r"\[[^\]]+\]\(([^)]+)\)", content):
             if "://" not in link and not link.startswith("#"):
@@ -64,14 +67,21 @@ def validate(root):
     if not {"private/", "raw/", "out/", "*.local.json", "*.local.txt", ".env"}.issubset(ignored):
         errors.append("missing_private_artifact_ignores")
     allowed = {"__future__", "argparse", "collections", "dataclasses", "hashlib", "ipaddress",
-               "json", "os", "pathlib", "re", "stat", "sys", "tomllib", "unicodedata", "sanitize"}
-    for relative in ("scripts/sanitize.py", "scripts/claude_privacy.py", "scripts/privacy_status.py"):
+               "json", "os", "pathlib", "re", "stat", "sys", "tomllib", "unicodedata", "sanitize",
+               "hook_supervisor", "structured_redaction"}
+    extra_imports = {
+        "scripts/hook_supervisor.py": {"selectors", "subprocess", "time"},
+        "scripts/structured_redaction.py": {"bisect", "html"},
+    }
+    for relative in ("scripts/sanitize.py", "scripts/claude_privacy.py", "scripts/privacy_status.py",
+                     "scripts/structured_redaction.py", "scripts/hook_supervisor.py"):
+        allowed_imports = allowed | extra_imports.get(relative, set())
         source = (root / relative).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(source)):
-            if isinstance(node, ast.Import) and any(alias.name.split(".")[0] not in allowed for alias in node.names):
+            if isinstance(node, ast.Import) and any(alias.name.split(".")[0] not in allowed_imports for alias in node.names):
                 errors.append("unexpected_runtime_dependency")
             if (isinstance(node, ast.ImportFrom) and node.module != "urllib.parse"
-                    and (node.module or "").split(".")[0] not in allowed):
+                    and (node.module or "").split(".")[0] not in allowed_imports):
                 errors.append("unexpected_runtime_dependency")
             if isinstance(node, ast.Call):
                 name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")

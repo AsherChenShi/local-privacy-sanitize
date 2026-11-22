@@ -12,7 +12,11 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts/sanitize.py"
 SPEC = importlib.util.spec_from_file_location("public_url_sanitizer", SCRIPT)
 SANITIZER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = SANITIZER
-SPEC.loader.exec_module(SANITIZER)
+sys.path.insert(0, str(SCRIPT.parent))
+try:
+    SPEC.loader.exec_module(SANITIZER)
+finally:
+    sys.path.pop(0)
 
 REPO = "https://github.com/octocat/Hello-World"
 API = "https://api.github.com/repos/octocat/Hello-World"

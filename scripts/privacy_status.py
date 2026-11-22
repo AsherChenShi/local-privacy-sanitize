@@ -84,8 +84,9 @@ def read_codex_tables(text):
     if '\"\"\"' in text or "'''" in text:
         raise ValueError("unsupported TOML syntax")
     plugin = {}
+    features = {}
     states = {hook_id(event): {} for event in EVENTS.values()}
-    target_tables = {f'[plugins."{CODEX_PLUGIN}"]': plugin}
+    target_tables = {f'[plugins."{CODEX_PLUGIN}"]': plugin, "[features]": features}
     target_tables.update({f'[hooks.state."{name}"]': value for name, value in states.items()})
     observed = set()
     table = None
@@ -100,13 +101,13 @@ def read_codex_tables(text):
                 observed.add(header)
         if table is None:
             continue
-        match = re.fullmatch(r'(enabled|trusted_hash|trusted_content_hash)\s*=\s*(true|false|"[^"]*")(?:\s*#.*)?', line)
+        match = re.fullmatch(r'(enabled|hooks|trusted_hash|trusted_content_hash)\s*=\s*(true|false|"[^"]*")(?:\s*#.*)?', line)
         if match:
             key, value = match.groups()
             if key in table:
                 raise ValueError("duplicate key")
             table[key] = json.loads(value)
-    return {"plugins": {CODEX_PLUGIN: plugin}, "hooks": {"state": states}}
+    return {"plugins": {CODEX_PLUGIN: plugin}, "hooks": {"state": states}, "features": features}
 
 
 def codex_cache(config_dir):
@@ -147,6 +148,7 @@ def codex_status(config_dir):
     return {
         "metadata_status": config_status,
         "configured_enabled": flag(plugin.get("enabled")),
+        "hooks_feature_enabled": flag(object_member(config, "features").get("hooks")),
         "local_plugin_cache": codex_cache(config_dir),
         "hooks": events,
         "runtime_hook_support": "unverified",
@@ -207,6 +209,22 @@ def claude_status(config_dir, project, version):
     }
 
 
+def protection_notice(host, status):
+    if host == "codex":
+        disabled = (status["configured_enabled"] is False or status["hooks_feature_enabled"] is False
+                    or any(hook["configured_enabled"] is False for hook in status["hooks"].values()))
+    else:
+        disabled = all(scope["configured_enabled"] in (None, False) for scope in status["settings"].values()) and any(
+            scope["configured_enabled"] is False for scope in status["settings"].values())
+        disabled = disabled or status["settings"]["user"]["all_hooks_disabled"] is True
+    return {
+        "protection_status": "not_protected" if disabled else "unverified",
+        "message_zh": ("当前配置有关闭的检查，相关发送路径未受保护。请先本地预检。" if disabled else
+                       "当前会话的 Hook 尚未验证。敏感内容请按未受保护处理，先本地预检。"),
+        "local_preflight": "python3 scripts/sanitize.py sanitize --input draft.md --out-dir out/review",
+    }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("host", choices=("codex", "claude"))
@@ -229,6 +247,7 @@ def main(argv=None):
         "host": args.host,
         "local_configuration": status,
         "hook_execution": "not_verified",
+        **protection_notice(args.host, status),
         "verification": {
             "instruction": "Check hook enable and trust in the host. In a new local session, submit these fictional test prompts separately.",
             "expect_pass": f"Reply only TEST_OK. Public link: {PUBLIC_LINK}",

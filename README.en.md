@@ -4,7 +4,7 @@
 
 Local text redaction with optional desktop plugin switches for Codex and Claude Code. The file tool uses the Python standard library to produce a candidate for local review while preserving relationships and key facts. The plugins inspect submitted text and selected tool results. The detector runs locally without sending text to a network service or a model.
 
-Use macOS or Linux with Python 3.9+. The file tool accepts UTF-8 `.txt`, `.md`, and `.log` files up to 2 MiB. The fixtures are fictional.
+Use macOS or Linux with Python 3.9+. The tool accepts UTF-8 `.txt`, `.log`, `.json`, and `.md` files up to 2 MiB. The fixtures are fictional. [Data flow and architecture](references/architecture.md)
 
 ## Install the file redaction skill
 
@@ -38,7 +38,9 @@ If the desktop **Code** tab only shows **Get Claude Code**, check whether your a
 3. Use **+ → Add plugins** or **+ → Plugins → Browse plugins** near the composer to find and install `claude-privacy` (`claude-privacy@local-privacy-tools`). Choose the scope you want. You can also enter `/plugin install claude-privacy@local-privacy-tools` in a Claude Code session.
 4. For everyday use, open **+ → Plugins → Manage plugins** or **Customize / Plugins** in the local session sidebar. Enable or disable the plugin, then start a new local Code conversation to verify the setting. The CLI also offers the **Installed** tab under `/plugin`. Your account must be able to start a Claude Code session. Check the **Code** tab in your app.
 
-When enabled, `UserPromptSubmit` rejects prompts that match the rules. `PostToolUse` replaces matching Bash and supported MCP results in the model context. Use the file tool to prepare and review a redacted copy before resubmitting a blocked prompt. When the plugin is disabled, Claude Code follows its normal flow.
+When enabled, `UserPromptSubmit` rejects prompts that match the rules. `PostToolUse` checks Bash, built-in `Read` text results, and supported MCP results. When replacement succeeds, the next model request receives the replacement. Prepare and review a redacted copy locally before resubmitting a blocked prompt. When the plugin is disabled, Claude Code follows its normal flow.
+
+To deny built-in `Read` before it opens originals, configure absolute directory paths. The rule applies to files in those directories and their subdirectories. Bash and other tools retain their own permissions. [Protected directory setup](references/privacy-boundary.md#claude-code-内置-read-保护)
 
 You can add a local entity dictionary at `~/.claude/local-privacy-sanitize/entities.local.json`. If you set `CLAUDE_CONFIG_DIR`, use the same path relative to that directory. See the [configuration format](references/privacy-boundary.md).
 
@@ -68,7 +70,9 @@ python3 scripts/privacy_status.py codex
 python3 scripts/privacy_status.py claude --project .
 ```
 
-The report shows local installation records or cached versions, configured switches, visible hook settings, and recorded trust evidence. For Claude Code, pass the client version with `--runtime-version` to compare it with the documented minimum for blocking on hook failure. The script reads local files without starting the host or changing settings. `hook_execution: not_verified` means the check still needs to be verified in a live session. The `expect_pass` and `expect_block` fields provide two fictional test prompts.
+The report shows local installation records or cached versions, configured switches, visible hook settings, and recorded trust evidence. For Claude Code, pass the client version with `--runtime-version` to compare it with the documented minimum for blocking on hook failure. The script reads local files without starting the host or changing settings. `protection_status: not_protected` means a check is configured off. `unverified` means configuration alone does not establish that the session is protected. With `hook_execution: not_verified`, verify a new local session using the fictional `expect_pass` and `expect_block` prompts. Use the command in `local_preflight` while protection is off or unverified.
+
+A running supervisor gives the check process up to six seconds. The host hook timeout remains ten seconds. A stalled check, worker crash, or invalid result produces a fixed response. Codex can still send when the host skips the hook or terminates it first. Treat that session as unprotected and prepare sensitive material with the independent local preflight. On supported versions of Claude Code, `onFailure: "block"` covers failure of a configured prompt hook. Tool result protection depends on the host accepting the replacement. [OpenAI Hooks documentation](https://learn.chatgpt.com/docs/hooks) · [Claude Code failure handling](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails)
 
 ## Codex terminal controls
 
@@ -84,6 +88,20 @@ python3 scripts/codex_privacy.py off
 After registration, review and trust the two `local-privacy-sanitize` hooks under **Settings → Hooks** or `/hooks`. The `hooks_registered` field confirms that the definitions were written. Check the host for the trust state. Each invocation reads the current mode. `off` updates the mode file and leaves other hooks alone. Keep this checkout at the same location because registration references the absolute script path.
 
 For Codex, either setup can use a local entity dictionary in `local-privacy-sanitize/entities.local.json` inside the Codex config directory (`~/.codex` by default or `$CODEX_HOME`). See the [configuration format](references/privacy-boundary.md). [OpenAI Hooks documentation](https://learn.chatgpt.com/docs/hooks)
+
+## Run the independent local preflight
+
+Process sensitive material outside the client. The preflight runs independently of either host and its hooks. Keep the original and any local dictionary where the agent cannot read them. Replace the example input path with your local file.
+
+```sh
+mkdir -p out
+python3 scripts/sanitize.py sanitize --input private/request.json --out-dir out/request
+python3 scripts/sanitize.py check --input out/request/sanitized.json
+```
+
+JSON produces `sanitized.json`, Markdown produces `sanitized.md`, and `.txt` and `.log` default to `sanitized.txt`. For structured material saved as `.txt` or `.log`, pass `--format json` or `--format markdown` to `sanitize`. Review the candidate and `report.json` locally, then submit only the candidate you approve.
+
+JSON redaction replaces matching string values while preserving keys, nesting, array order, and unchanged number tokens. Markdown redaction preserves supported inline links, tables, and fences. Fences marked `json` use the same JSON processing. If the format is invalid, a match cannot be replaced reliably, or the candidate fails validation, the tool blocks candidate creation. [Format and privacy boundary](references/privacy-boundary.md#结构化预检)
 
 ## Try the fictional file example
 
@@ -114,9 +132,10 @@ For real material, keep the original and any entity dictionary in a location the
 | URLs and connection strings | Eligible HTTPS links pass the URL check. A match can cover an entire value that fails the link rules |
 | Names, organizations, addresses, project names | Literal entries in an optional local entity dictionary |
 | Unconfigured names, indirect identifiers, business secrets | Require local review or another control |
-| PDF, images, Office documents, audio, attachments | Use a separate control. The file tool accepts plain text |
+| JSON and common Markdown structures | Local candidate generation and validation in the original format |
+| PDF, images, Office documents, audio, attachments | Use a separate control |
 | Codex prompt and supported tool result events | Optional local check and block |
-| Claude Code prompt, Bash, and supported MCP result events | Optional prompt block and tool result replacement |
+| Claude Code prompt, Bash, built-in `Read` text results, and supported MCP results | Optional prompt block and supported tool result replacement |
 
 Tool result replacement controls what the model sees after a tool runs. Commands that have already executed, network requests that have already left the machine, and host telemetry captured before a hook can still contain the original values. A hook that has yet to load, an unsupported tool result format, attachments, existing conversation context, and unhandled routes require separate controls. Keep highly sensitive originals in an environment with appropriate access restrictions.
 

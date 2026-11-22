@@ -12,6 +12,7 @@ import sys
 import tempfile
 from threading import Thread
 
+from hook_smoke_fixtures import FAKE_SECRET, PRIVATE_URL, changed_prompt_hook, injected_fault, reviewed_candidates
 from privacy_smoke_fixtures import CREDENTIAL_RESULT, MCP_SERVER, MCP_TOOL, METRIC_RESULT, OPAQUE_CREDENTIAL
 from url_smoke_fixtures import PRIVILEGED_URL_CASES, PUBLIC_URL_FIXTURE, PUBLIC_URLS
 
@@ -130,14 +131,14 @@ def smoke(codex, *, plugin=False):
                 else:
                     subprocess.run([*control, "on" if value else "off"], check=True, capture_output=True)
 
-            def run(prompt, lane=None):
+            def run(prompt, lane=None, *, trust=True):
                 server.requests = []
                 server.lane = lane
                 # These hooks came from the package or handler built by this test.
                 # Trust applies only to this isolated command and canary data.
                 result = subprocess.run(
                     [codex, "exec", "--skip-git-repo-check", "--ephemeral", "--json",
-                     "--dangerously-bypass-hook-trust", "--cd", str(workspace), prompt],
+                     *(["--dangerously-bypass-hook-trust"] if trust else []), "--cd", str(workspace), prompt],
                     stdin=subprocess.DEVNULL, capture_output=True, text=True,
                     encoding="utf-8", env=env, timeout=30,
                 )
@@ -151,6 +152,41 @@ def smoke(codex, *, plugin=False):
                 set_enabled(True)
                 result, requests = run(PROMPT_CANARY)
                 assert not requests, "The blocked prompt reached the model endpoint"
+                if plugin:
+                    cache = config_dir / "plugins/cache/local-privacy-tools/codex-privacy"
+                    [entrypoint] = cache.glob("*/scripts/codex_privacy.py")
+                    entrypoints = [entrypoint, market / "plugins/codex-privacy/scripts/codex_privacy.py"]
+                    manifests = [path.parents[1] / "hooks/hooks.json" for path in entrypoints]
+                    for fault in ("hang", "crash", "bad_output"):
+                        with injected_fault(entrypoints, fault):
+                            result, requests = run(PROMPT_CANARY)
+                        assert not requests, f"The {fault} worker fault allowed a model request"
+                    print("PASS: worker timeout, crash and invalid decision all blocked")
+
+                    with changed_prompt_hook(manifests, timeout=1):
+                        with injected_fault(entrypoints, "hang", in_worker=False):
+                            _, requests = run(PROMPT_CANARY)
+                    assert len(requests) == 1 and PROMPT_CANARY in json.dumps(requests), (
+                        "Codex host-timeout baseline changed; check the observed native behavior"
+                    )
+
+                    result, requests = run(PROMPT_CANARY, trust=False)
+                    assert len(requests) == 1 and PROMPT_CANARY in json.dumps(requests), (
+                        "Codex untrusted-Hook baseline changed; check the observed native behavior"
+                    )
+                    helper = ROOT / "scripts/privacy_status.py"
+                    notice = subprocess.run([sys.executable, str(helper), "codex", "--config-dir", str(config_dir)],
+                                            check=True, capture_output=True, text=True, timeout=10)
+                    status = json.loads(notice.stdout)
+                    assert status["hook_execution"] == "not_verified"
+                    assert "未受保护" in status["message_zh"]
+                    for candidate in reviewed_candidates(root):
+                        for trusted in (False, True):
+                            result, requests = run(candidate, trust=trusted)
+                            assert result.returncode == 0 and len(requests) == 1, result.stdout + result.stderr
+                            wire = json.dumps(requests, ensure_ascii=False)
+                            assert "1200" in wire and FAKE_SECRET not in wire and PRIVATE_URL not in wire
+                    print("PASS: untrusted Hook gap reported; JSON/Markdown preflight works with or without Hook")
                 result, requests = run("Please answer with a short greeting.")
                 assert result.returncode == 0 and len(requests) == 1, result.stdout + result.stderr
                 result, requests = run("Read these public references:\n" + PUBLIC_URL_FIXTURE)
@@ -176,6 +212,11 @@ def smoke(codex, *, plugin=False):
                 assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
                 assert BLOCK_REASON in json.dumps(requests[-1], ensure_ascii=False)
                 assert TOOL_CANARY not in json.dumps(requests)
+                if plugin:
+                    with injected_fault(entrypoints, "hang", event="PostToolUse"):
+                        _, requests = run("Read the synthetic fixture with an interrupted check.", lane="bash")
+                    assert len(requests) == 2 and TOOL_CANARY not in json.dumps(requests)
+                    assert "本地隐私检查超时" in json.dumps(requests[-1], ensure_ascii=False)
                 fixture.write_text(PUBLIC_URL_FIXTURE, encoding="utf-8")
                 result, requests = run("Read the public link fixture.", lane="bash")
                 assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr

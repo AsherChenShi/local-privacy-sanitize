@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline candidate redaction for UTF-8 plain text. Not an upload interceptor."""
+"""Offline candidate redaction for UTF-8 text, JSON and Markdown."""
 from __future__ import annotations
 
 import argparse
@@ -16,14 +16,17 @@ import sys
 import unicodedata
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-VERSION = "0.2.2"
+from structured_redaction import StructureError, json_parts, markdown_parts, markdown_text, splice
+
+VERSION = "0.2.3"
 MAX_BYTES = 2 * 1024 * 1024
 MAX_POLICY_BYTES = 256 * 1024
 MAX_MATCHES = 20000
 ENTITY_TYPES = {"PERSON", "ORG", "LOCATION", "PROJECT", "ACCOUNT", "SENSITIVE"}
 PLACEHOLDER = re.compile(r"\[(?:PERSON|ORG|LOCATION|PROJECT|ACCOUNT|SENSITIVE|URL|EMAIL|CNID|PHONE|SSN|SECRET|CARD|IP)_[0-9]{3,6}\]")
 INVISIBLES = "\u200b\u200c\u200d\u2060\ufeff"
-TEXT_SUFFIXES = {".txt", ".md", ".log"}
+INPUT_FORMATS = {".txt": "text", ".log": "text", ".json": "json", ".md": "markdown"}
+ARTIFACTS = {"text": "sanitized.txt", "json": "sanitized.json", "markdown": "sanitized.md"}
 
 
 class Rejected(Exception):
@@ -362,7 +365,7 @@ def _valid_ip(value):
         return None
 
 
-def find_matches(text: str, entities: tuple[Entity, ...] = ()) -> list[Match]:
+def find_matches(text: str, entities: tuple[Entity, ...] = (), *, placeholder_source=None) -> list[Match]:
     candidates = []
     def add(match):
         if len(candidates) >= MAX_MATCHES:
@@ -398,6 +401,9 @@ def find_matches(text: str, entities: tuple[Entity, ...] = ()) -> list[Match]:
         for match in pattern.finditer(text):
             span = match.span("value") if "value" in match.re.groupindex else match.span()
             value = text[span[0]:span[1]]
+            if pattern is CREDENTIAL and placeholder_source is not None and value[:1] in ('"', "'"):
+                if PLACEHOLDER.fullmatch(placeholder_source[span[0] + 1:span[1] - 1]):
+                    continue
             if kind == "PHONE":
                 if span in run_ids:
                     continue
@@ -446,44 +452,146 @@ def _merge_overlaps(matches: list[Match], text: str) -> list[Match]:
     return merged
 
 
-def sanitize(text: str, entities: tuple[Entity, ...] = ()) -> tuple[str, dict]:
-    original = text
-    positions = []
-    text, changes = normalize(text, positions)
-    if PLACEHOLDER.search(text):
+def matches_with_placeholders(text, entities):
+    candidate = PLACEHOLDER.sub(lambda match: " " * len(match.group()), text)
+    return find_matches(candidate, entities, placeholder_source=text)
+
+
+class Redaction:
+    def __init__(self, entities, *, allow_placeholders=False):
+        self.entities = entities
+        self.allow_placeholders = allow_placeholders
+        self.identities = {}
+        self.counters = Counter()
+        self.occurrences = Counter()
+        self.count = 0
+
+    def replacement(self, kind, identity):
+        self.count += 1
+        if self.count > MAX_MATCHES:
+            raise Rejected("TOO_MANY_MATCHES")
+        key = (kind, identity)
+        if key not in self.identities:
+            self.counters[kind] += 1
+            self.identities[key] = f"[{kind}_{self.counters[kind]:03d}]"
+        self.occurrences[kind] += 1
+        return self.identities[key]
+
+    def matches(self, text):
+        if self.allow_placeholders:
+            return matches_with_placeholders(text, self.entities)
+        if PLACEHOLDER.search(text):
+            raise Rejected("RESERVED_PLACEHOLDER_IN_INPUT")
+        return find_matches(text, self.entities)
+
+    def text(self, original, *, preserve_lines=False):
+        positions = []
+        text, _ = normalize(original, positions)
+        replacements = []
+        for match in _merge_overlaps(self.matches(text), text):
+            start, end = positions[match.start], positions[match.end - 1] + 1
+            if preserve_lines and any(char in original[start:end] for char in "\r\n"):
+                raise Rejected("AMBIGUOUS_MARKDOWN_RANGE")
+            replacements.append((start, end, self.replacement(match.kind, match.identity)))
+        return splice(original, replacements)
+
+    def json(self, source):
+        parts, shape = json_parts(source)
+        replacements = []
+        for part in parts:
+            value, _ = normalize(part.value)
+            field = part.field is not None and SECRET_FIELD.fullmatch(normalize(part.field)[0].strip())
+            if part.kind == "json_key":
+                if PLACEHOLDER.search(value) or self.matches(value):
+                    raise Rejected("SENSITIVE_JSON_KEY")
+            elif part.kind in ("json_scalar", "json_container"):
+                if (field and value not in ("", "null", "true", "false")) or self.matches(value):
+                    raise Rejected("SENSITIVE_NON_STRING_JSON_VALUE")
+            else:
+                if not self.allow_placeholders and PLACEHOLDER.search(value):
+                    raise Rejected("RESERVED_PLACEHOLDER_IN_INPUT")
+                if field and credential_value_present(part.value):
+                    replacement = self.replacement("SECRET", value)
+                else:
+                    replacement = self.text(part.value)
+                if replacement != part.value:
+                    replacements.append((part.start, part.end, json.dumps(replacement, ensure_ascii=False)))
+        output = splice(source, replacements)
+        if replacements and json_parts(output)[1] != shape:
+            raise Rejected("JSON_STRUCTURE_CHANGED")
+        return output
+
+    def markdown(self, source):
+        parts, shape = markdown_parts(source)
+        replacements = []
+        for part in parts:
+            original = source[part.start:part.end]
+            if part.kind == "json":
+                updated = self.json(original)
+            elif part.kind in ("link", "autolink"):
+                value, _ = normalize(markdown_text(original))
+                if self.matches(value):
+                    marker = self.replacement("URL", value)[1:-1]
+                    if part.kind == "autolink":
+                        updated = f"redacted:{marker}"
+                    else:
+                        updated = f"#redacted-{marker.lower().replace('_', '-')}"
+                else:
+                    updated = original
+            elif part.kind == "markup":
+                if self.matches(normalize(original)[0]):
+                    raise Rejected("SENSITIVE_MARKDOWN_MARKUP")
+                updated = original
+            else:
+                contents = original.rstrip(" \t")
+                updated = self.text(contents, preserve_lines=True) + original[len(contents):]
+                if part.kind == "text":
+                    rendered = markdown_text(updated)
+                    if rendered != updated and self.matches(normalize(rendered)[0]):
+                        raise Rejected("AMBIGUOUS_MARKDOWN_RANGE")
+            if updated != original:
+                replacements.append((part.start, part.end, updated))
+        output = splice(source, replacements)
+        if replacements and markdown_parts(output)[1] != shape:
+            raise Rejected("MARKDOWN_STRUCTURE_CHANGED")
+        return output
+
+    def run(self, source, format):
+        try:
+            return {"text": self.text, "json": self.json, "markdown": self.markdown}[format](source)
+        except StructureError as error:
+            raise Rejected(str(error)) from None
+
+
+def sanitize(text: str, entities: tuple[Entity, ...] = (), *, format="text") -> tuple[str, dict]:
+    normalized, changes = normalize(text)
+    if PLACEHOLDER.search(normalized):
         raise Rejected("RESERVED_PLACEHOLDER_IN_INPUT")
-    matches = _merge_overlaps(find_matches(text, entities), text)
-    identities = {}
-    counters = Counter()
-    occurrences = Counter()
-    parts = []
-    cursor = 0
-    for match in matches:
-        key = (match.kind, match.identity)
-        if key not in identities:
-            counters[match.kind] += 1
-            identities[key] = f"[{match.kind}_{counters[match.kind]:03d}]"
-        start, end = positions[match.start], positions[match.end - 1] + 1
-        parts.extend((original[cursor:start], identities[key]))
-        cursor = end
-        occurrences[match.kind] += 1
-    parts.append(original[cursor:])
-    output = "".join(parts)
-    # Also reject candidates whose remaining structured credentials cannot be replaced as text.
-    if scan_kind(output, entities):
-        raise Rejected("RESIDUAL_KNOWN_MATCH")
+    redaction = Redaction(entities)
+    output = redaction.run(text, format)
+    if format == "text":
+        if scan_kind(output, entities):
+            raise Rejected("RESIDUAL_KNOWN_MATCH")
+    else:
+        reviewed = Redaction(entities, allow_placeholders=True)
+        if reviewed.run(output, format) != output:
+            raise Rejected("RESIDUAL_KNOWN_MATCH")
+        if format == "markdown" and scan_kind(output, entities):
+            raise Rejected("RESIDUAL_KNOWN_MATCH")
     report = {
         "version": VERSION,
         "status": "REVIEW_REQUIRED",
-        "occurrences": dict(sorted(occurrences.items())),
-        "unique_entities": dict(sorted(counters.items())),
+        "format": format,
+        "artifact": ARTIFACTS[format],
+        "occurrences": dict(sorted(redaction.occurrences.items())),
+        "unique_entities": dict(sorted(redaction.counters.items())),
         "configured_entity_groups": len(entities),
         "normalization": changes,
         "output_sha256": hashlib.sha256(output.encode("utf-8")).hexdigest(),
         "coverage": "structured_rules_and_explicit_literals_only",
         "warnings": ["UNCONFIGURED_NAMES_AND_CONTEXT_MAY_REMAIN", "NOT_AN_UPLOAD_INTERCEPTOR"],
     }
-    # identities is transient; neither original values nor a reversal map is exported.
+    # The identity map exists in this process only.
     return output, report
 
 
@@ -497,30 +605,30 @@ def credential_value_present(value):
     return value is not None and not isinstance(value, bool)
 
 
-def scan_kind(value, entities=(), *, parse_text=True):
+def scan_kind(value, entities=(), *, parse_text=True, tool_content=True):
     """Return the first fixed classification found in a hook value, without its contents."""
     if isinstance(value, dict):
-        if value.get("type") in ("image", "audio", "resource", "resource_link", "binary"):
+        if tool_content and value.get("type") in ("image", "audio", "resource", "resource_link", "binary"):
             raise Rejected("UNSUPPORTED_TOOL_CONTENT")
         for key, child in value.items():
             normalized, _ = normalize(key)
             if SECRET_FIELD.fullmatch(normalized.strip()) and credential_value_present(child):
                 return "SECRET"
-            kind = scan_kind(key, entities, parse_text=False) or scan_kind(child, entities, parse_text=parse_text)
+            kind = (scan_kind(key, entities, parse_text=False)
+                    or scan_kind(child, entities, parse_text=parse_text, tool_content=tool_content))
             if kind:
                 return kind
         return None
     if isinstance(value, list):
         for child in value:
-            kind = scan_kind(child, entities, parse_text=parse_text)
+            kind = scan_kind(child, entities, parse_text=parse_text, tool_content=tool_content)
             if kind:
                 return kind
         return None
     if value is None or isinstance(value, bool):
         return None
     text, _ = normalize(str(value))
-    candidate = PLACEHOLDER.sub(lambda match: " " * len(match.group()), text)
-    matches = find_matches(candidate, entities)
+    matches = matches_with_placeholders(text, entities)
     if matches:
         return matches[0].kind
     return scan_json_text(text, entities) if parse_text else None
@@ -535,7 +643,7 @@ def scan_json_text(text, entities):
         value = json.loads(stripped, object_pairs_hook=_unique_object)
     except json.JSONDecodeError:
         return None
-    return scan_kind(value, entities, parse_text=False)
+    return scan_kind(value, entities, parse_text=False, tool_content=False)
 
 
 def scan_value(value, entities=()):
@@ -562,7 +670,7 @@ def read_local(path: Path, limit: int, suffixes: set[str]) -> str:
         raise Rejected("UTF8_REQUIRED") from None
 
 
-def write_bundle(directory: Path, output: str, report: dict) -> None:
+def write_bundle(directory: Path, output: str, report: dict, *, format="text") -> None:
     """Fresh directory only. Private permissions; exclusive, no-follow file opens."""
     os.mkdir(directory, mode=0o700)
     dir_fd = None
@@ -571,7 +679,7 @@ def write_bundle(directory: Path, output: str, report: dict) -> None:
         dir_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                          | getattr(os, "O_NOFOLLOW", 0))
         for name, content in (
-            ("sanitized.txt", output),
+            (ARTIFACTS[format], output),
             ("report.json", json.dumps(report, ensure_ascii=False, indent=2) + "\n"),
         ):
             descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -601,6 +709,8 @@ def main(argv=None) -> int:
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--policy", type=Path)
     parser.add_argument("--out-dir", type=Path)
+    parser.add_argument("--format", choices=tuple(ARTIFACTS),
+                        help="Explicit format for a .txt or .log file")
     try:
         args = parser.parse_args(argv)
         if os.name != "posix":
@@ -608,26 +718,31 @@ def main(argv=None) -> int:
         if (args.command == "sanitize") != (args.out_dir is not None):
             raise Rejected("INVALID_ARGUMENTS")
         entities = parse_policy(read_local(args.policy, MAX_POLICY_BYTES, {".json"})) if args.policy else ()
-        source = read_local(args.input, MAX_BYTES, TEXT_SUFFIXES)
+        source = read_local(args.input, MAX_BYTES, set(INPUT_FORMATS))
+        inferred = INPUT_FORMATS[args.input.suffix.lower()]
+        if args.format and inferred not in ("text", args.format):
+            raise Rejected("FORMAT_EXTENSION_MISMATCH")
+        format = args.format or inferred
         if args.command == "sanitize":
-            output, report = sanitize(source, entities)
-            write_bundle(args.out_dir, output, report)
-            print(json.dumps({"status": report["status"], "occurrences": report["occurrences"]}))
+            output, report = sanitize(source, entities, format=format)
+            write_bundle(args.out_dir, output, report, format=format)
+            print(json.dumps({"status": report["status"], "artifact": report["artifact"],
+                              "occurrences": report["occurrences"]}))
             return 0
         normalized, _ = normalize(source)
-        # check accepts generated placeholders, but never interprets them as approval.
-        candidate = PLACEHOLDER.sub(lambda m: " " * len(m.group()), normalized)
-        matches = _merge_overlaps(find_matches(candidate, entities), candidate)
-        if not matches:
-            kind = scan_json_text(normalized, entities)
-            if kind:
-                print(json.dumps({"status": "KNOWN_MATCHES_FOUND", "occurrences": {},
-                                  "structured_match": kind, "review_required": True}))
-                return 3
-        found = bool(matches)
+        if format == "text":
+            matches = _merge_overlaps(matches_with_placeholders(normalized, entities), normalized)
+            occurrences = Counter(match.kind for match in matches)
+            structured_match = scan_json_text(normalized, entities) if not matches else None
+        else:
+            redaction = Redaction(entities, allow_placeholders=True)
+            redaction.run(source, format)
+            occurrences = redaction.occurrences
+            structured_match = scan_kind(source, entities) if format == "markdown" and not occurrences else None
+        found = bool(occurrences or structured_match)
+        result = {"structured_match": structured_match} if structured_match else {}
         print(json.dumps({"status": "KNOWN_MATCHES_FOUND" if found else "NO_KNOWN_MATCHES",
-                          "occurrences": dict(Counter(m.kind for m in matches)),
-                          "review_required": True}))
+                          "occurrences": dict(occurrences), "review_required": True, **result}))
         return 3 if found else 0
     except Rejected as error:
         print(json.dumps({"status": "BLOCKED", "code": str(error)}), file=sys.stderr)

@@ -11,7 +11,9 @@ PAYLOAD = (
     "SKILL.md",
     "agents/openai.yaml",
     "scripts/sanitize.py",
+    "scripts/structured_redaction.py",
     "references/privacy-boundary.md",
+    "references/architecture.md",
 )
 
 

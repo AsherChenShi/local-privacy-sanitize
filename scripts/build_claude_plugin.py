@@ -14,6 +14,8 @@ FILES = {
     PLUGIN / "scripts/claude_privacy.py": "scripts/claude_privacy.py",
     PLUGIN / "scripts/sanitize.py": "scripts/sanitize.py",
     PLUGIN / "scripts/privacy_status.py": "scripts/privacy_status.py",
+    PLUGIN / "scripts/hook_supervisor.py": "scripts/hook_supervisor.py",
+    PLUGIN / "scripts/structured_redaction.py": "scripts/structured_redaction.py",
 }
 
 
