@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-from build_codex_plugin import build
+from build_codex_plugin import SIGNUP_FILES, build
 
 
 PLUGIN = Path("plugins/claude-privacy")
@@ -18,6 +18,7 @@ FILES = {
     PLUGIN / "scripts/structured_redaction.py": "scripts/structured_redaction.py",
     PLUGIN / "scripts/review_policy.py": "scripts/review_policy.py",
     PLUGIN / "scripts/review_preview.py": "scripts/review_preview.py",
+    **{PLUGIN / "scripts" / name: f"scripts/{name}" for name in SIGNUP_FILES},
 }
 
 

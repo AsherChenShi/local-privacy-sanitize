@@ -6,6 +6,7 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SIGNUP_FILES = ("signup_browser.py", "signup_broker.py", "signup_local.py", "signup_mcp.py")
 PLUGIN = Path("plugins/codex-privacy")
 FILES = {
     Path(".agents/plugins/marketplace.json"): "desktop/marketplace.json",
@@ -18,6 +19,7 @@ FILES = {
     PLUGIN / "scripts/structured_redaction.py": "scripts/structured_redaction.py",
     PLUGIN / "scripts/review_policy.py": "scripts/review_policy.py",
     PLUGIN / "scripts/review_preview.py": "scripts/review_preview.py",
+    **{PLUGIN / "scripts" / name: f"scripts/{name}" for name in SIGNUP_FILES},
 }
 
 

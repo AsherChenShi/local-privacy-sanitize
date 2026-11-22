@@ -1,5 +1,5 @@
 {
   "name": "claude-privacy",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Offline protection for submitted text and supported Bash and MCP results."
 }

@@ -6,6 +6,8 @@
 
 支持 macOS/Linux、Python 3.9+ 和 UTF-8 `.txt`、`.log`、`.json`、`.md` 文件，单文件不超过 2 MiB。所有仓库示例和测试数据均为虚构。[数据流和架构](references/architecture.md)
 
+两个插件包还包含可选的本地邮箱填写实验。由本地终端一次批准，模型只收到状态。本版本限回环 HTTPS 测试站点和 `.invalid` 邮箱。[一次性邮箱授权实验](references/signup-lab.md)
+
 ## 安装文件脱敏 skill
 
 ```bash

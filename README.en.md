@@ -6,6 +6,8 @@ Local text redaction with optional desktop plugin switches for Codex and Claude 
 
 Use macOS or Linux with Python 3.9+. The tool accepts UTF-8 `.txt`, `.log`, `.json`, and `.md` files up to 2 MiB. The fixtures are fictional. [Data flow and architecture](references/architecture.md)
 
+Both plugin bundles include an optional local email-fill lab. A separate local terminal approves the one-time action, and the model receives only status. This version supports HTTPS loopback test sites and synthetic `.invalid` addresses. [One-time email authorization lab](references/signup-lab.md)
+
 ## Install the file redaction skill
 
 ```sh

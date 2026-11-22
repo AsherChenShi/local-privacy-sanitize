@@ -17,6 +17,9 @@ def validate(root):
         "tests/test_structured_redaction.py", "tests/test_hook_supervisor.py", "references/architecture.md",
         "scripts/review_policy.py", "scripts/review_preview.py", "tests/test_preview_integration.py",
         "tests/test_review_policy.py", "tests/test_review_preview.py",
+        "scripts/signup_broker.py", "scripts/signup_browser.py", "scripts/signup_local.py", "scripts/signup_mcp.py",
+        "references/signup-lab.md", "tests/signup_fixtures.py", "tests/signup_smoke.py",
+        "tests/test_signup_broker.py", "tests/test_signup_browser.py", "tests/test_signup_local.py", "tests/test_signup_mcp.py",
         "references/privacy-boundary.md", "examples/entities.example.json",
         "examples/input.example.txt", "tests/test_sanitize.py", "tests/test_package.py",
         "scripts/codex_privacy.py", "tests/test_codex_privacy.py", "tests/codex_smoke.py",
@@ -41,7 +44,7 @@ def validate(root):
     if "[TODO:" in skill:
         errors.append("unfinished_scaffold")
     for relative in ("README.md", "README.en.md", "SKILL.md",
-                     "references/privacy-boundary.md", "references/architecture.md"):
+                     "references/privacy-boundary.md", "references/architecture.md", "references/signup-lab.md"):
         content = (root / relative).read_text(encoding="utf-8")
         for link in re.findall(r"\[[^\]]+\]\(([^)]+)\)", content):
             if "://" not in link and not link.startswith("#"):
