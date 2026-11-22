@@ -157,9 +157,9 @@ def block(reason):
     return 0  # Codex consumes structured hook decisions from successful processes.
 
 
-def run_hook(state, event):
+def run_hook(state, event, *, controlled_by_plugin=False):
     try:
-        if load_mode(state) == "off":
+        if not controlled_by_plugin and load_mode(state) == "off":
             return 0
         source = sys.stdin.buffer.read(MAX_BYTES + 1)
         if len(source) > MAX_BYTES:
@@ -181,13 +181,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config-dir", type=Path,
                         default=Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex"))
-    parser.add_argument("action", choices=("install", "on", "off", "status", "hook"))
+    parser.add_argument("action", choices=("install", "on", "off", "status", "hook", "plugin-hook"))
     parser.add_argument("event", nargs="?", choices=tuple(EVENT_FIELDS))
     args = parser.parse_args()
     config_dir = args.config_dir.expanduser().absolute()
-    if args.action == "hook" and args.event:
-        return run_hook(mode_file(config_dir), args.event)
-    if args.action == "hook" or args.event:
+    is_hook = args.action in ("hook", "plugin-hook")
+    if is_hook and args.event:
+        return run_hook(mode_file(config_dir), args.event, controlled_by_plugin=args.action == "plugin-hook")
+    if is_hook or args.event:
         parser.error("event is required only for hook")
     try:
         print(json.dumps(configure(config_dir, args.action)))

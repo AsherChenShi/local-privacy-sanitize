@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -63,7 +64,7 @@ class Receiver(BaseHTTPRequestHandler):
         self.wfile.write(stream)
 
 
-def smoke(codex):
+def smoke(codex, *, plugin=False):
     with tempfile.TemporaryDirectory(prefix="privacy-codex-smoke-") as temporary:
         root = Path(temporary)
         config_dir = root / "codex"
@@ -76,28 +77,49 @@ def smoke(codex):
                 'model = "gpt-5.4"\nmodel_provider = "mock"\nweb_search = "disabled"\n'
                 'approval_policy = "never"\nsandbox_mode = "read-only"\n'
                 '[analytics]\nenabled = false\n[features]\n'
-                'apps = false\nplugins = false\nmemories = false\nhooks = true\n'
+                f'apps = false\nplugins = {str(plugin).lower()}\nmemories = false\nhooks = true\n'
                 'enable_request_compression = false\n'
                 '[model_providers.mock]\nname = "Mock"\n'
                 f'base_url = "http://127.0.0.1:{server.server_port}/v1"\n'
                 'wire_api = "responses"\nrequires_openai_auth = false\n'
                 'request_max_retries = 0\nstream_max_retries = 0\n'
             )
-            control = [sys.executable, str(SCRIPT), "--config-dir", str(config_dir)]
-            subprocess.run([*control, "install"], check=True, capture_output=True)
-            assert all(str(SCRIPT) in group["hooks"][0]["command"] for groups in
-                       json.loads((config_dir / "hooks.json").read_text())["hooks"].values()
-                       for group in groups)
-            thread = Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-
-            # The temporary config contains only the hook this test just registered.
-            # Accept it for this test process without changing real user trust.
             env = {"PATH": os.environ["PATH"], "CODEX_HOME": str(config_dir),
                    "LANG": "en_US.UTF-8", "TMPDIR": str(root)}
+            control = [sys.executable, str(SCRIPT), "--config-dir", str(config_dir)]
+            if plugin:
+                market = root / "local market"
+                steps = [
+                    [sys.executable, str(SCRIPT.with_name("build_codex_plugin.py")), str(market)],
+                    [codex, "plugin", "marketplace", "add", str(market)],
+                    [codex, "plugin", "add", "codex-privacy@local-privacy-tools"],
+                ]
+                for step in steps:
+                    setup = subprocess.run(step, capture_output=True, text=True,
+                                           cwd=workspace, env=env, timeout=30)
+                    assert setup.returncode == 0, setup.stdout + setup.stderr
+            else:
+                subprocess.run([*control, "install"], check=True, capture_output=True)
+
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            # Persist the same user-level setting as the desktop Plugins switch.
+            def set_enabled(value):
+                if plugin:
+                    config = config_dir / "config.toml"
+                    pattern = r'(\[plugins\."codex-privacy@local-privacy-tools"\]\s*\n\s*enabled\s*=\s*)(?:true|false)'
+                    updated, count = re.subn(pattern, lambda match: match[1] + str(value).lower(),
+                                             config.read_text())
+                    assert count == 1, "Plugin install did not save the expected Codex setting"
+                    config.write_text(updated)
+                else:
+                    subprocess.run([*control, "on" if value else "off"], check=True, capture_output=True)
+
             def run(prompt, test_tool=False):
                 server.requests = []
                 server.test_tool = test_tool
+                # These hooks came from the package or handler built by this test.
+                # Trust applies only to this isolated command and canary data.
                 result = subprocess.run(
                     [codex, "exec", "--skip-git-repo-check", "--ephemeral", "--json",
                      "--dangerously-bypass-hook-trust", "--cd", str(workspace), prompt],
@@ -107,10 +129,11 @@ def smoke(codex):
                 return result, server.requests.copy()
 
             try:
+                set_enabled(False)
                 result, requests = run(PROMPT_CANARY)
                 assert result.returncode == 0 and len(requests) == 1, result.stdout + result.stderr
                 assert PROMPT_CANARY in json.dumps(requests)
-                subprocess.run([*control, "on"], check=True, capture_output=True)
+                set_enabled(True)
                 result, requests = run(PROMPT_CANARY)
                 assert not requests, "The blocked prompt reached the model endpoint"
                 result, requests = run("Please answer with a short greeting.")
@@ -132,7 +155,7 @@ def smoke(codex):
                 assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
                 assert BLOCK_REASON in json.dumps(requests[-1], ensure_ascii=False)
                 assert TOOL_CANARY not in json.dumps(requests)
-                subprocess.run([*control, "off"], check=True, capture_output=True)
+                set_enabled(False)
                 result, requests = run("Apply the local test now.", test_tool=True)
                 assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
                 assert TOOL_CANARY in json.dumps(requests[-1])
@@ -142,9 +165,15 @@ def smoke(codex):
 
 
 if __name__ == "__main__":
-    binaries = sys.argv[1:] or [shutil.which("codex")]
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--plugin", action="store_true")
+    parser.add_argument("binaries", nargs="*")
+    args = parser.parse_args()
+    binaries = args.binaries or [shutil.which("codex")]
     for binary in binaries:
         if not binary:
             sys.exit("Codex CLI was not found. Pass its executable as an argument.")
-        smoke(binary)
+        smoke(binary, plugin=args.plugin)
         print(f"PASS: {binary}: off forwards text, on blocks known values and allows sanitized text")

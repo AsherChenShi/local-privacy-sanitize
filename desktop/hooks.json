@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -E -S \"${PLUGIN_ROOT}/scripts/codex_privacy.py\" plugin-hook UserPromptSubmit",
+            "timeout": 10,
+            "statusMessage": "脱敏保护 · 检查提交文本"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -E -S \"${PLUGIN_ROOT}/scripts/codex_privacy.py\" plugin-hook PostToolUse",
+            "timeout": 10,
+            "statusMessage": "脱敏保护 · 检查工具结果"
+          }
+        ]
+      }
+    ]
+  }
+}

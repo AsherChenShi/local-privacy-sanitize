@@ -16,6 +16,8 @@ def validate(root):
         "references/privacy-boundary.md", "examples/entities.example.json",
         "examples/input.example.txt", "tests/test_sanitize.py", "tests/test_package.py",
         "scripts/codex_privacy.py", "tests/test_codex_privacy.py", "tests/codex_smoke.py",
+        "scripts/build_codex_plugin.py", "tests/test_desktop_plugin.py",
+        "desktop/marketplace.json", "desktop/plugin.json", "desktop/hooks.json",
         ".github/workflows/ci.yml",
     )
     for relative in required:

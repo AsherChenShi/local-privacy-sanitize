@@ -23,7 +23,19 @@ python3 scripts/install_skill.py --target claude
 
 安装器只复制明确列出的 skill 文件，不复制 Git 历史、测试、示例或用户数据。目标已存在时会停止，不覆盖已有配置。安装后如客户端未发现新技能，重新开启会话。Codex 可显式调用 `$local-privacy-sanitize`；其他宿主的发现与调用方式以其当前文档为准。
 
-## 在 Codex 中选择脱敏保护
+## 在 Codex 桌面界面切换
+
+用本地插件「脱敏保护」一起控制提交文本检查和工具结果检查。安装一次后，日常只操作 Codex 的插件开关。插件适用于 macOS/Linux 上的本地 Codex，需要桌面运行环境能找到 Python 3.9+。
+
+1. 将仓库打包为本地插件目录。运行 `python3 scripts/build_codex_plugin.py outputs/codex-privacy-desktop`，会生成目录和同名 ZIP。收到 ZIP 的用户可以直接解压。
+2. 在 Codex 打开解压得到的 `codex-privacy-desktop` 文件夹作为项目。重启桌面应用以加载本地来源。在 **Plugins → 本地隐私工具** 中安装「脱敏保护」。
+3. 在 **Settings → Hooks** 审核并信任该插件的两条检查。需要保护时在 **Plugins → 脱敏保护** 启用，普通会话中则可禁用。切换后用新的本地聊天确认状态。
+
+启用且信任后，命中敏感规则时客户端拦截。需要改写时，用本地脱敏工具生成副本，复核后再提交。禁用此插件会停止它的两条检查。
+
+如果以前启用了终端版，请先用 `python3 scripts/codex_privacy.py off` 关闭旧模式，避免两套配置同时检测。插件开关与旧版模式文件独立。两种接入共用可选的本地实体词典。 [OpenAI 本地插件说明](https://developers.openai.com/plugins/build/plugins#how-local-marketplaces-work)
+
+## 终端切换方式
 
 在本机终端的仓库目录运行以下命令。注册与 skill 安装相互独立，首次注册默认关闭。
 
@@ -104,7 +116,7 @@ python3 -m compileall -q -b scripts tests
 git diff --check
 ```
 
-本机有 Codex CLI 时可运行 `python3 tests/codex_smoke.py`。它用临时配置和回环地址模拟模型服务，使用合成样本验证开启及关闭后的实际请求。
+本机有 Codex CLI 时可运行 `python3 tests/codex_smoke.py`。使用支持本地插件的引擎时，可加 `--plugin` 验证原生插件开关对应的配置。测试用临时配置和回环地址模拟模型服务，使用合成样本验证开启及关闭后的实际请求。
 
 测试验证合成样本下的预期行为，不代表真实中文资料达到某个召回率。check 与 sanitizer 共享检测规则，不是独立检测引擎。当前未验证客户端全链路拦截、真实敏感材料、未知格式凭据或通用语义等价。
 

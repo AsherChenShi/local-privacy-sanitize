@@ -1,0 +1,12 @@
+{
+  "name": "codex-privacy",
+  "version": "0.2.0",
+  "description": "在 Codex 本地检查提示词和受支持的工具结果，命中时拦截。",
+  "interface": {
+    "displayName": "脱敏保护",
+    "shortDescription": "开启本地检查，命中敏感规则时阻止发送",
+    "longDescription": "启用后，在本机检查提交的文本和受支持的工具结果。命中时请脱敏后重提。关闭后按常规流程提交。",
+    "category": "Productivity"
+  },
+  "hooks": "./hooks/hooks.json"
+}

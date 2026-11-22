@@ -1,0 +1,20 @@
+{
+  "name": "local-privacy-tools",
+  "interface": {
+    "displayName": "本地隐私工具"
+  },
+  "plugins": [
+    {
+      "name": "codex-privacy",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-privacy"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
