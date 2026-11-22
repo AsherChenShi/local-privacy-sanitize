@@ -21,6 +21,7 @@ def validate(root):
         "scripts/claude_privacy.py", "scripts/build_claude_plugin.py",
         "claude-desktop/marketplace.json", "claude-desktop/plugin.json", "claude-desktop/hooks.json",
         "tests/test_claude_plugin.py", "tests/claude_smoke.py",
+        "tests/test_public_urls.py", "tests/url_smoke_fixtures.py",
         ".github/workflows/ci.yml",
     )
     for relative in required:
@@ -68,7 +69,8 @@ def validate(root):
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.Import) and any(alias.name.split(".")[0] not in allowed for alias in node.names):
                 errors.append("unexpected_runtime_dependency")
-            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] not in allowed:
+            if (isinstance(node, ast.ImportFrom) and node.module != "urllib.parse"
+                    and (node.module or "").split(".")[0] not in allowed):
                 errors.append("unexpected_runtime_dependency")
             if isinstance(node, ast.Call):
                 name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")

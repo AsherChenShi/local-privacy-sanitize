@@ -44,6 +44,19 @@ You can add a local entity dictionary at `~/.claude/local-privacy-sanitize/entit
 
 To test the switch, open a new local conversation in each mode and submit `Reply only TEST_OK. The fictional test email is desktop-test@example.invalid`. The enabled plugin should reject the prompt. With the plugin disabled, the prompt should receive a reply. Verify that the client loaded the plugin and hooks before relying on the check. [Claude Code desktop plugins](https://code.claude.com/docs/en/desktop#install-plugins) · [Claude Code Hooks](https://code.claude.com/docs/en/hooks#posttooluse-decision-control)
 
+## Link checks and plugin updates
+
+You can keep protection enabled during routine work. HTTPS links for GitHub browsing, API calls, raw files, and official documentation pass the URL check when they match the rules. File redaction and checking use the same policy. Links with tokens, signatures, credentials, or redirect parameters still trigger the detector, as do internal or ambiguous links. Other rules still check nearby text and the URL itself. Offline checks cannot tell whether a normal-looking repository link points to a private repository. See the [link rules](references/privacy-boundary.md#链接检查规则).
+
+If you already installed a plugin, update the checkout and run its build command with a new output directory. Point the local marketplace at the new bundle, then reinstall the plugin from that updated source to refresh the host's cached copy. Updating the checkout alone leaves the installed copy in place. Choose whether to enable it in the host and review any hook prompt. Update the file redaction skill separately from the plugins.
+
+In a new local session with protection enabled, verify the two prompts below. The first link should pass the URL check. The second uses a fictional token and should be blocked.
+
+```text
+Describe this public project https://github.com/AsherChenShi/local-privacy-sanitize
+Check this link with a fictional token https://github.com/AsherChenShi/local-privacy-sanitize?token=SYNTHETIC_ONLY
+```
+
 ## Codex terminal controls
 
 The terminal setup is independent of skill installation and of the desktop plugin. Registration starts with protection disabled.
@@ -85,7 +98,7 @@ For real material, keep the original and any entity dictionary in a location the
 | --- | --- |
 | Common email addresses, mainland China mobile numbers, ID-like values, some payment cards, IP addresses | Built-in rules and typed placeholders |
 | Some credential formats and labeled secrets | Rule-based detection |
-| URLs and connection strings | A match can cover the entire value, including public URLs |
+| URLs and connection strings | Eligible HTTPS links pass the URL check. A match can cover an entire value that fails the link rules |
 | Names, organizations, addresses, project names | Literal entries in an optional local entity dictionary |
 | Unconfigured names, indirect identifiers, business secrets | Require local review or another control |
 | PDF, images, Office documents, audio, attachments | Use a separate control. The file tool accepts plain text |

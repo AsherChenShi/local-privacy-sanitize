@@ -14,8 +14,9 @@ import re
 import stat
 import sys
 import unicodedata
+from urllib.parse import parse_qsl, unquote, urlsplit
 
-VERSION = "0.1.0"
+VERSION = "0.2.1"
 MAX_BYTES = 2 * 1024 * 1024
 MAX_POLICY_BYTES = 256 * 1024
 MAX_MATCHES = 20000
@@ -111,8 +112,11 @@ def parse_policy(data: str) -> tuple[Entity, ...]:
 
 
 # Rules are deliberately conservative. Detection coverage is stated in the report.
+URL = re.compile(
+    r"(?<![A-Za-z0-9_])(?:https?|ftp|sftp|ssh|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?)"
+    r"://[^\s<>\"'`，。；！？）]+", re.I,
+)
 RULES = [
-    ("URL", re.compile(r"(?<![A-Za-z0-9_])(?:https?|ftp|sftp|ssh|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?)://[^\s<>\"'，。；！？）]+", re.I), 90),
     ("EMAIL", re.compile(r"(?<![A-Za-z0-9_.+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?\.[A-Za-z]{2,63}(?![A-Za-z0-9-])"), 80),
     ("CNID", re.compile(r"(?<![A-Za-z0-9])\d{17}[\dXx](?![A-Za-z0-9])"), 85),
     ("PHONE", re.compile(r"(?<![A-Za-z0-9])(?:\+?86[ \t-]*)?1[3-9](?:[ \t-]?\d){9}(?![A-Za-z0-9])"), 80),
@@ -133,6 +137,142 @@ CARD = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
 IPV4 = re.compile(r"(?<![A-Za-z0-9_.])(?:\d{1,3}\.){3}\d{1,3}(?![A-Za-z0-9_]|\.\d)")
 IPV6 = re.compile(r"(?<![A-Za-z0-9_:])(?:[A-Fa-f0-9]{0,4}:){2,7}[A-Fa-f0-9]{0,4}(?![A-Za-z0-9_:])")
 
+DOC_PATHS = {
+    "docs.github.com": ("/",),
+    "learn.chatgpt.com": ("/docs",),
+    "developers.openai.com": ("/api/docs", "/codex", "/docs", "/plugins", "/cookbook"),
+    "platform.openai.com": ("/docs",),
+    "help.openai.com": ("/en",),
+    "code.claude.com": ("/docs",),
+    "docs.anthropic.com": ("/en",),
+    "docs.claude.com": ("/en",),
+    "platform.claude.com": ("/docs",),
+    "docs.python.org": ("/",),
+    "developer.mozilla.org": ("/",),
+    "learn.microsoft.com": ("/",),
+    "genai.owasp.org": ("/llmrisk",),
+    "csrc.nist.gov": ("/pubs",),
+    "presidio.dataprivacystack.org": ("/",),
+}
+GITHUB_RESOURCE = {
+    "actions", "blob", "blame", "branches", "commit", "commits", "compare",
+    "contributors", "discussions", "forks", "issues", "network", "pull", "pulls",
+    "releases", "security", "stargazers", "tags", "tree", "wiki",
+}
+GITHUB_API_RESOURCE = GITHUB_RESOURCE | {
+    "assignees", "collaborators", "comments", "contents", "deployments", "downloads",
+    "git", "languages", "license", "milestones", "readme", "stats", "subscribers",
+}
+GITHUB_NONPUBLIC = {
+    "account", "apps", "auth", "code", "codespaces", "dashboard", "enterprise",
+    "enterprises", "installations", "join", "login", "logout", "new",
+    "notifications", "oauth", "orgs", "password_reset", "search", "session",
+    "sessions", "settings", "signup", "sponsors", "user", "user-attachments",
+}
+QUERY_SLUG = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,47}")
+DOC_QUERY = {
+    "api-version", "lang", "locale", "site_variant", "surface",
+    "translationFallback", "trk", "version", "view",
+}
+GITHUB_QUERY = {
+    "head_sha": re.compile(r"[0-9a-fA-F]{7,64}"),
+    "page": re.compile(r"[1-9][0-9]{0,5}"),
+    "per_page": re.compile(r"(?:[1-9][0-9]?|100)"),
+    "plain": re.compile(r"[01]"),
+    "sha": re.compile(r"[0-9a-fA-F]{7,64}"),
+    "tab": re.compile(r"(?:readme|readme-ov-file|MIT-1-ov-file|Apache-2\.0-1-ov-file)"),
+}
+URL_SECRET_SEGMENTS = re.compile(
+    r"(?:access[-_]?token|refresh[-_]?token|api[-_]?key|client[-_]?secret|"
+    r"password|passwd|secret|signature|sig|signed|token)", re.I,
+)
+BAD_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
+URL_SECRET_PATTERNS = tuple(pattern for kind, pattern, _ in RULES if kind in ("SECRET", "EMAIL"))
+GITHUB_NAME = re.compile(r"[A-Za-z0-9_.-]+")
+GITHUB_API_TEMPLATE = re.compile(
+    r"/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:git/refs|git/commits|commits)\{/sha\}"
+)
+
+
+def github_public_path(host, path):
+    segments = path.strip("/").split("/") if path.strip("/") else []
+    if host == "avatars.githubusercontent.com":
+        return re.fullmatch(r"/u/[0-9]+/?", path) is not None
+    if host == "raw.githubusercontent.com":
+        return len(segments) >= 4 and all(GITHUB_NAME.fullmatch(item) for item in segments[:2])
+    if host == "api.github.com":
+        if GITHUB_API_TEMPLATE.fullmatch(path):
+            return True
+        if segments[:1] == ["repos"]:
+            if len(segments) < 3 or not all(GITHUB_NAME.fullmatch(item) for item in segments[1:3]):
+                return False
+            resource = segments[3:]
+            if len(resource) > 1 and resource[0] == "actions":
+                return resource[1] in ("artifacts", "jobs", "runs", "workflows")
+            return not resource or resource[0] in GITHUB_API_RESOURCE
+        return (len(segments) >= 2 and segments[0] in ("users", "orgs")
+                and GITHUB_NAME.fullmatch(segments[1]) is not None
+                and (len(segments) == 2 or segments[2] in (
+                    "events", "followers", "following", "gists", "orgs", "public_members",
+                    "received_events", "repos", "starred", "subscriptions")))
+    if not segments:
+        return True
+    if segments[0].lower() in GITHUB_NONPUBLIC or not GITHUB_NAME.fullmatch(segments[0]):
+        return False
+    if len(segments) == 1:
+        return True
+    return (GITHUB_NAME.fullmatch(segments[1]) is not None
+            and (len(segments) == 2 or segments[2] in GITHUB_RESOURCE))
+
+
+def public_url_candidate(url):
+    # Parse a Markdown or prose URL without consuming its closing punctuation.
+    url = url.rstrip(".,!)]")
+    if len(url) > 4096 or BAD_ESCAPE.search(url) or "\\" in url:
+        return False
+    try:
+        parts = urlsplit(url)
+        authority = parts.netloc.lower()
+        if parts.scheme != "https" or authority != parts.hostname or ";" in parts.query:
+            return False  # Exact authority: no credentials, ports, or host suffix tricks.
+        path = unquote(parts.path, errors="strict") or "/"
+        fragment = unquote(parts.fragment, errors="strict")
+        query = (parse_qsl(parts.query, keep_blank_values=True, strict_parsing=True,
+                           max_num_fields=12, errors="strict") if parts.query else [])
+    except (UnicodeError, ValueError):
+        return False
+
+    if (any(c.isspace() or unicodedata.category(c).startswith("C") for c in path)
+            or re.search(r"[%?#;=&@:\\]", path)
+            or "//" in path or re.search(r"%2f", parts.path, re.I)
+            or set(path.split("/")) & {".", ".."}
+            or any(URL_SECRET_SEGMENTS.fullmatch(s) for s in path.rstrip("/").split("/")[:-1])
+            or (fragment and not re.fullmatch(r"[\w.\-/]{1,200}", fragment))):
+        return False
+    # Detect known secrets and emails even when URL-escaped in an otherwise public path.
+    if any(rule.search(value) for value in (path, fragment, *(value for _, value in query))
+           for rule in URL_SECRET_PATTERNS):
+        return False
+
+    if authority in DOC_PATHS:
+        if not any(prefix == "/" or path == prefix or path.startswith(prefix + "/")
+                   for prefix in DOC_PATHS[authority]):
+            return False
+        permitted = dict.fromkeys(DOC_QUERY, QUERY_SLUG)
+    elif authority in {"github.com", "api.github.com", "raw.githubusercontent.com", "avatars.githubusercontent.com"}:
+        if not github_public_path(authority, path):
+            return False
+        permitted = ({"v": re.compile(r"[1-9][0-9]?")} if authority == "avatars.githubusercontent.com"
+                     else GITHUB_QUERY if authority in {"github.com", "api.github.com"} else {})
+    else:
+        return False
+    if ("{" in path or "}" in path) and not (
+            authority == "api.github.com" and GITHUB_API_TEMPLATE.fullmatch(path)):
+        return False
+
+    return (len({key for key, _ in query}) == len(query)
+            and all(key in permitted and permitted[key].fullmatch(value) for key, value in query))
+
 
 def _luhn(number: str) -> bool:
     digits = [int(c) for c in number if c.isdigit()]
@@ -151,6 +291,10 @@ def find_matches(text: str, entities: tuple[Entity, ...] = ()) -> list[Match]:
         if len(candidates) >= MAX_MATCHES:
             raise Rejected("TOO_MANY_MATCHES")
         candidates.append(match)
+
+    for match in URL.finditer(text):
+        if not public_url_candidate(match.group()):
+            add(Match(*match.span(), "URL", match.group(), 90))
 
     credential_ends = {}
     for match in CREDENTIAL.finditer(text):

@@ -12,6 +12,8 @@ import tempfile
 from threading import Thread
 from urllib.parse import urlsplit
 
+from url_smoke_fixtures import PRIVILEGED_URL_CASES, PUBLIC_URL_FIXTURE, PUBLIC_URLS
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = "claude-privacy@local-privacy-tools"
@@ -89,7 +91,7 @@ class ModelStub(BaseHTTPRequestHandler):
             self.respond("application/json", json.dumps(message).encode())
 
 
-def run_mcp_stub():
+def run_mcp_stub(fixture):
     for line in sys.stdin:
         request = json.loads(line)
         if "id" not in request:
@@ -107,7 +109,7 @@ def run_mcp_stub():
                 "inputSchema": {"type": "object", "properties": {}},
             }]}
         elif method == "tools/call":
-            result = {"content": [{"type": "text", "text": TOOL_CANARY}]}
+            result = {"content": [{"type": "text", "text": fixture.read_text(encoding="utf-8")}]}
         else:
             result = {}
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
@@ -118,7 +120,8 @@ def smoke(binary, *, prompts_only):
         tmp = Path(directory)
         workspace = tmp / "workspace"
         workspace.mkdir()
-        (workspace / "fixture.txt").write_text(TOOL_CANARY + "\n", encoding="utf-8")
+        fixture = workspace / "fixture.txt"
+        fixture.write_text(TOOL_CANARY + "\n", encoding="utf-8")
         marketplace = tmp / "market"
         subprocess.run(
             [sys.executable, str(ROOT / "scripts/build_claude_plugin.py"), str(marketplace)],
@@ -165,7 +168,7 @@ def smoke(binary, *, prompts_only):
                 if lane == "mcp":
                     mcp_servers["privacy-fixture"] = {
                         "type": "stdio", "command": sys.executable,
-                        "args": [str(Path(__file__).resolve()), "--mock-mcp"],
+                        "args": [str(Path(__file__).resolve()), "--mock-mcp", str(fixture)],
                     }
                     allowed_tool = MCP_TOOL
                 result = cli([
@@ -190,7 +193,13 @@ def smoke(binary, *, prompts_only):
                 assert "Privacy check blocked" in blocked.stdout + blocked.stderr, "No Hook block feedback"
                 _, requests = run("Confirm this sanitized value [EMAIL_001].")
                 assert "[EMAIL_001]" in requests and PROMPT_CANARY not in requests
-                print("PASS: native enable/disable and prompt behavior")
+                _, requests = run("Read these public references:\n" + PUBLIC_URL_FIXTURE)
+                assert all(url in requests for url in PUBLIC_URLS)
+                for index, (url, _) in enumerate(PRIVILEGED_URL_CASES, start=1):
+                    blocked, requests = run("Inspect this synthetic link: " + url, expect_success=False)
+                    assert requests == "[]", f"Privileged URL fixture {index} reached the model endpoint"
+                    assert "Privacy check blocked" in blocked.stdout + blocked.stderr
+                print("PASS: native enable/disable and prompt behavior, including links")
 
                 for lane in (() if prompts_only else ("bash", "mcp")):
                     if lane == "mcp":
@@ -199,18 +208,29 @@ def smoke(binary, *, prompts_only):
                     assert len(json.loads(requests)) >= 2, "No tool-result request reached the mock"
                     assert TOOL_CANARY not in requests, "Enabled plugin exposed the synthetic tool result"
                     assert "Privacy check blocked" in requests, "Model received no tool-result replacement"
+                    fixture.write_text(PUBLIC_URL_FIXTURE, encoding="utf-8")
+                    _, requests = run("Read the public link fixture.", lane=lane)
+                    assert len(json.loads(requests)) >= 2, "No tool-result request reached the mock"
+                    assert all(url in requests for url in PUBLIC_URLS)
+                    for index, (url, private_value) in enumerate(PRIVILEGED_URL_CASES, start=1):
+                        fixture.write_text(url, encoding="utf-8")
+                        _, requests = run("Read the synthetic link fixture.", lane=lane)
+                        assert len(json.loads(requests)) >= 2, "No tool-result request reached the mock"
+                        assert "Privacy check blocked" in requests, "Model received no URL replacement"
+                        assert private_value not in requests, f"Privileged {lane} fixture {index} reached the model"
+                    fixture.write_text(TOOL_CANARY + "\n", encoding="utf-8")
                     cli(["plugin", "disable", PLUGIN, "--scope", "user"])
                     _, requests = run("Read the synthetic fixture.", lane=lane)
                     assert TOOL_CANARY in requests, "Disabled plugin prevented the raw tool-result control"
-                    print(f"PASS: native {lane} replacement and disabled control")
+                    print(f"PASS: native {lane} replacement, including links, and disabled control")
             finally:
                 server.shutdown()
                 thread.join()
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--mock-mcp"]:
-        run_mcp_stub()
+    if len(sys.argv) == 3 and sys.argv[1] == "--mock-mcp":
+        run_mcp_stub(Path(sys.argv[2]))
         sys.exit()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path, help="Path to an installed Claude Code binary")

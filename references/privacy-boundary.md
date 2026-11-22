@@ -16,13 +16,29 @@
 
 ## 检测范围
 
-内置规则涵盖常见 ASCII 邮箱、中国大陆手机号（部分空格、横线、+86 变体）、18 位身份证形状（不以校验码过滤）、美国 SSN 形状、部分 Luhn 银行卡号、IPv4/IPv6，以及带标签的账号。URL/连接串按整体替换，当前识别 http(s)、ftp、sftp、ssh、postgres(ql)、mysql、mongodb、redis、amqp(s) 等方案。
+内置规则涵盖常见 ASCII 邮箱、中国大陆手机号（部分空格、横线、+86 变体）、18 位身份证形状（不以校验码过滤）、美国 SSN 形状、部分 Luhn 银行卡号、IPv4/IPv6，以及带标签的账号。URL/连接串命中规则时按整体替换。当前识别 http(s)、ftp、sftp、ssh、postgres(ql)、mysql、mongodb、redis、amqp(s) 等方案。
 
 凭据规则识别部分 API token 前缀、JWT 形状、Bearer、常见中英文凭据标签，以及部分 PEM 私钥。引号包围的标签值整体替换，包括其中的空格；检测到不完整的私钥或带引号凭据会阻断。**这些是启发式规则，不是完整凭据检测器。** 未识别的提供商格式、其他语言、分行或编码后的秘密仍可能遗漏。
 
 检测视图处理全角 ASCII 与部分零宽字符，匹配结果映射回原始文本，只替换相应范围。不要将其解释为全面 Unicode 混淆防护。双向控制符、NUL 等不支持的控制字符会阻断。过多匹配会阻断，以限制资源消耗。
 
 嵌套匹配取覆盖整个范围的规则；部分重叠取并集，使用 SENSITIVE 占位符，避免保留敏感范围的尾部。合并可能减少实体分类精度，须结合本地复核判断语义是否足够。
+
+## 链接检查规则
+
+文件脱敏、复检和两个宿主的 Hook 都按同一套 URL 规则做本地判断。符合主机、路径和查询限制的 HTTPS 链接可跳过 URL 匹配。
+
+| 主机 | 路径和查询限制 |
+| --- | --- |
+| `github.com`、`api.github.com` | 常见账号或仓库页、限定仓库资源和 API 路径。API 响应中的部分 `{/sha}` 形式 URI 模板也可通过。查询只接受符合格式的 `head_sha`、`page`、`per_page`、`plain`、`sha`、`tab` |
+| `raw.githubusercontent.com`、`avatars.githubusercontent.com` | 原始文件路径不带查询。头像仅限数字用户 ID 和可选的数字 `v` 参数 |
+| 明确列出的文档主机 | 必须符合对应文档路径前缀。查询只接受 `api-version`、`lang`、`locale`、`site_variant`、`surface`、`translationFallback`、`trk`、`version`、`view` 及符合格式的值 |
+
+文档来源包括 GitHub Docs，OpenAI 的 Learn、Developers、Platform 和 Help，Claude Code、Anthropic Docs 和 Claude Platform，以及 Python、MDN、Microsoft Learn、OWASP、NIST、Presidio 的指定文档路径。完整主机、路径和参数限制以 [检测代码](../scripts/sanitize.py) 为准。
+
+带用户信息、端口、访问令牌、签名、未知或重复查询、重定向参数的链接仍按敏感链接处理。HTTP、连接串、内网链接和不明确的形式仍会命中。查询参数限制只用于过滤文本 URL，同时应由用户决定和授权实际发送的请求。
+
+URL 例外只影响 URL 规则。凭据、邮箱、IP 或本地实体词典等规则仍独立检查 URL 与周围文字。检查不联网，不跟随跳转，也不能凭 URL 外观判断仓库是否公开。提交私有仓库链接之前仍需由用户判断适合发送哪些信息，尤其是仓库名、分支名和文件路径。
 
 ## 保留与缺失
 

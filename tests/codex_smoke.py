@@ -12,6 +12,8 @@ import sys
 import tempfile
 from threading import Thread
 
+from url_smoke_fixtures import PRIVILEGED_URL_CASES, PUBLIC_URL_FIXTURE, PUBLIC_URLS
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/codex_privacy.py"
@@ -138,6 +140,12 @@ def smoke(codex, *, plugin=False):
                 assert not requests, "The blocked prompt reached the model endpoint"
                 result, requests = run("Please answer with a short greeting.")
                 assert result.returncode == 0 and len(requests) == 1, result.stdout + result.stderr
+                result, requests = run("Read these public references:\n" + PUBLIC_URL_FIXTURE)
+                assert result.returncode == 0 and len(requests) == 1, result.stdout + result.stderr
+                assert all(url in json.dumps(requests) for url in PUBLIC_URLS)
+                for index, (url, _) in enumerate(PRIVILEGED_URL_CASES, start=1):
+                    _, requests = run("Inspect this synthetic link: " + url)
+                    assert not requests, f"Privileged URL fixture {index} reached the model endpoint"
                 draft = root / "draft.txt"
                 draft.write_text("请分析来自 " + PROMPT_CANARY + " 的虚构消息。", encoding="utf-8")
                 bundle = root / "candidate"
@@ -155,6 +163,17 @@ def smoke(codex, *, plugin=False):
                 assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
                 assert BLOCK_REASON in json.dumps(requests[-1], ensure_ascii=False)
                 assert TOOL_CANARY not in json.dumps(requests)
+                (workspace / "fixture.txt").write_text(PUBLIC_URL_FIXTURE, encoding="utf-8")
+                result, requests = run("Read the public link fixture.", test_tool=True)
+                assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
+                assert all(url in json.dumps(requests[-1]) for url in PUBLIC_URLS)
+                for index, (url, private_value) in enumerate(PRIVILEGED_URL_CASES, start=1):
+                    (workspace / "fixture.txt").write_text(url, encoding="utf-8")
+                    result, requests = run("Read the synthetic link fixture.", test_tool=True)
+                    assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
+                    assert BLOCK_REASON in json.dumps(requests[-1], ensure_ascii=False)
+                    assert private_value not in json.dumps(requests), f"Tool URL fixture {index} reached the model"
+                (workspace / "fixture.txt").write_text(TOOL_CANARY, encoding="utf-8")
                 set_enabled(False)
                 result, requests = run("Apply the local test now.", test_tool=True)
                 assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
@@ -176,4 +195,4 @@ if __name__ == "__main__":
         if not binary:
             sys.exit("Codex CLI was not found. Pass its executable as an argument.")
         smoke(binary, plugin=args.plugin)
-        print(f"PASS: {binary}: off forwards text, on blocks known values and allows sanitized text")
+        print(f"PASS: {binary}: prompt and tool checks, including public and privileged links")

@@ -54,6 +54,19 @@ python3 scripts/install_skill.py --target claude
 
 测试切换时，只使用虚构数据。分别启用、禁用插件，各开一个新会话并发送 `只回复 TEST_OK。测试邮箱是 desktop-test@example.invalid`。启用时应被拒绝，禁用时应能正常收到回复。客户端必须实际加载插件和 Hooks，才能依赖这项检查。[Claude Code 桌面插件](https://code.claude.com/docs/en/desktop#install-plugins) · [Claude Code Hooks](https://code.claude.com/docs/en/hooks#posttooluse-decision-control)
 
+## 链接检查与插件更新
+
+日常可以保持保护开启。符合规则的 HTTPS GitHub 浏览、API、原始文件及官方文档链接可通过 URL 检查，文件脱敏和复检也使用同一套规则。带令牌、签名、登录信息或重定向参数的链接，以及内网和不明确的链接，仍会命中。公开链接旁的邮箱和凭据等内容会分别检查。离线检查无法判断一个外观正常的仓库链接对应公开还是私有仓库。具体匹配条件见 [链接检查规则](references/privacy-boundary.md#链接检查规则)。
+
+如果已经安装插件，请先更新仓库，用上面的构建命令生成新包。每次构建请选用尚不存在的输出目录。用新版目录更新本地插件来源，再从更新后的来源重新安装对应插件，以刷新宿主缓存。只更新仓库不会替换已安装的副本。在各自的插件界面选择是否启用，出现 Hook 审核提示时重新审核。文件脱敏 skill 与两个宿主插件分别更新。
+
+在启用保护的新本地会话中，可以用下面这两条文本复验。第一条应通过 URL 检查，第二条使用虚构令牌，应被拦截。
+
+```text
+请说明这个公开项目的用途：https://github.com/AsherChenShi/local-privacy-sanitize
+测试这个含虚构令牌的链接：https://github.com/AsherChenShi/local-privacy-sanitize?token=SYNTHETIC_ONLY
+```
+
 ## Codex 终端切换方式
 
 在本机终端的仓库目录运行以下命令。注册与 skill 安装相互独立，首次注册默认关闭。
@@ -72,7 +85,7 @@ python3 scripts/codex_privacy.py off     # 不脱敏
 | 脱敏保护（`on`） | `UserPromptSubmit` 在模型请求前检查用户文本，`PostToolUse` 检查受支持的工具结果。命中时阻断。用下方脱敏工具生成副本，在本地复核后重新提交。 |
 | 不脱敏（`off`） | 这两个 Hook 直接放行，Codex 按常规流程处理文本和工具结果。 |
 
-Hook 使用同一套检测规则，包括整条 URL 匹配。可在 Codex 配置目录下的 `local-privacy-sanitize/entities.local.json` 增加本地实体词典，格式见 [配置与安全边界](references/privacy-boundary.md)。默认配置目录是 `~/.codex`，设置了 `CODEX_HOME` 时使用其路径。注册保留已有的其他 Hook 定义，并引用当前仓库中的脚本绝对路径，请保留这个检出位置。关闭时只修改模式文件，其他 Hook 继续执行。
+Hook 使用同一套检测规则，包括上面的链接检查。可在 Codex 配置目录下的 `local-privacy-sanitize/entities.local.json` 增加本地实体词典，格式见 [配置与安全边界](references/privacy-boundary.md)。默认配置目录是 `~/.codex`，设置了 `CODEX_HOME` 时使用其路径。注册保留已有的其他 Hook 定义，并引用当前仓库中的脚本绝对路径，请保留这个检出位置。关闭时只修改模式文件，其他 Hook 继续执行。
 
 Codex 暂未提供 `UserPromptSubmit` 原地替换提示词的接口。附件、截图、历史上下文、托管工具和未走这两个事件的其他路径需要独立处理。Hook 已启动但检查异常时会返回阻断，Hook 未信任、无法启动或被宿主跳过时需要从客户端核实实际行为。 [OpenAI Hooks 文档](https://learn.chatgpt.com/docs/hooks)
 
@@ -117,7 +130,7 @@ python3 scripts/sanitize.py check \
 | 信息 | 处理方式 |
 | --- | --- |
 | 常见邮箱、大陆手机号、证件形状、部分银行卡号、IP | 内置规则检测与类型占位符 |
-| 部分凭据格式、带标签秘密、URL/连接串 | 识别后替换，URL 按整体替换 |
+| 部分凭据格式、带标签秘密、URL/连接串 | 识别敏感值和不符合放行条件的链接，命中的链接按整体替换 |
 | 姓名、公司、地址、项目名 | 本地显式配置；同组别名共享占位符 |
 | 未配置姓名、特殊经历、商业秘密、组合再识别 | 不自动判断，必须复核或使用受控环境 |
 | PDF、图片、Office、音频 | 未支持，直接输入会被拒绝 |
@@ -127,7 +140,7 @@ python3 scripts/sanitize.py check \
 
 同一文件内稳定替换，跨文件不进行身份关联。重叠范围合并以避免敏感尾部遗漏。归一化只用于检测，替换范围外的原文不变。原文已发送至云端时，本工具无法撤回这次传输。
 
-两种插件都按规则匹配整条 URL，包括公开链接。Claude Code 的结果替换只发生在工具执行后，已经执行的命令、先前发出的网络请求和在 Hook 前记录的遥测不受影响。Hook 未加载、工具结果格式不受支持、附件、历史上下文和未覆盖的工具路径仍需单独处理。
+Claude Code 的结果替换只发生在工具执行后，已经执行的命令、先前发出的网络请求和在 Hook 前记录的遥测不受影响。Hook 未加载、工具结果格式不受支持、附件、历史上下文和未覆盖的工具路径仍需单独处理。
 
 ## 开发与验证
 
