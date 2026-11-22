@@ -91,6 +91,7 @@ class ClaudePluginTests(unittest.TestCase):
             "plugins/claude-privacy/hooks/hooks.json",
             "plugins/claude-privacy/scripts/claude_privacy.py",
             "plugins/claude-privacy/scripts/sanitize.py",
+            "plugins/claude-privacy/scripts/privacy_status.py",
         }
         with zipfile.ZipFile(self.marketplace.with_suffix(".zip")) as archive:
             self.assertIsNone(archive.testzip())
@@ -100,8 +101,18 @@ class ClaudePluginTests(unittest.TestCase):
             for name in archive.namelist():
                 self.assertEqual(archive.read(name), (self.root / name).read_bytes())
 
+    def test_packaged_status_does_not_create_configuration(self):
+        result = subprocess.run([sys.executable, str(self.plugin / "scripts/privacy_status.py"),
+                                 "claude", "--config-dir", str(self.config_dir), "--project", str(self.root)],
+                                check=True, timeout=10, capture_output=True, text=True)
+        self.assertEqual(json.loads(result.stdout)["hook_execution"], "not_verified")
+        self.assertFalse(self.config_dir.exists())
+
     def test_prompt_detections_and_clean_prompt(self):
-        self.assertEqual(self.submit("Contact " + CANARY)["decision"], "block")
+        blocked = self.submit("Contact " + CANARY)
+        self.assertEqual(blocked["decision"], "block")
+        self.assertIn("[EMAIL]", blocked["reason"])
+        self.assertIs(blocked["hookSpecificOutput"]["suppressOriginalPrompt"], True)
         self.assertIsNone(self.submit("List two ways to check a service."))
         self.assertIsNone(self.submit("Contact [EMAIL_001]."))
 
@@ -173,6 +184,35 @@ class ClaudePluginTests(unittest.TestCase):
             "content": [{"type": "text", "text": "Three active public projects."}],
             "structuredContent": {"projects": 3},
         }))
+
+    def test_mcp_replaces_structured_credentials_without_echo(self):
+        canary = "SYNTHETIC_OPAQUE_VALUE"
+        for fields in (
+            {"credentials": {"password": canary}},
+            {"headers": {"Set-Cookie": ["session=" + canary]}},
+        ):
+            with self.subTest(fields=list(fields)):
+                response = {"content": [{"type": "text", "text": "Build finished."}],
+                            "structuredContent": fields}
+                output = self.tool_result("mcp__test__sample", response)
+                self.assertIsInstance(output["content"], list)
+                self.assertNotIn(canary, json.dumps(output))
+                self.assertNotIn("structuredContent", output)
+        self.assertIsNone(self.tool_result("mcp__test__sample", {
+            "structuredContent": {"token_count": 1200, "authorization_required": False},
+        }))
+
+    def test_mcp_uninspectable_content_is_replaced(self):
+        for item in (
+            {"type": "resource_link", "uri": "file:///test/SYNTHETIC_PATH"},
+            {"type": "binary", "data": "SYNTHETIC_DATA"},
+            {"type": "unknown", "text": "SYNTHETIC_UNKNOWN"},
+            {"type": "text", "text": {"value": "SYNTHETIC_BAD_TEXT"}},
+        ):
+            with self.subTest(kind=item["type"]):
+                output = self.tool_result("mcp__test__sample", {"content": [item]})
+                self.assertEqual(output["content"][0]["type"], "text")
+                self.assertNotIn("SYNTHETIC_", json.dumps(output))
 
 
 if __name__ == "__main__":

@@ -64,9 +64,18 @@ class DesktopPluginTests(unittest.TestCase):
                 "marketplace/plugins/codex-privacy/hooks/hooks.json",
                 "marketplace/plugins/codex-privacy/scripts/codex_privacy.py",
                 "marketplace/plugins/codex-privacy/scripts/sanitize.py",
+                "marketplace/plugins/codex-privacy/scripts/privacy_status.py",
             })
             for name in archive.namelist():
                 self.assertEqual(archive.read(name), (self.root / name).read_bytes())
+
+    def test_packaged_status_does_not_create_configuration(self):
+        config = self.root / "missing-config"
+        result = subprocess.run([sys.executable, str(self.plugin / "scripts/privacy_status.py"),
+                                 "codex", "--config-dir", str(config)],
+                                check=True, timeout=10, capture_output=True, text=True)
+        self.assertEqual(json.loads(result.stdout)["hook_execution"], "not_verified")
+        self.assertFalse(config.exists())
 
 
 if __name__ == "__main__":

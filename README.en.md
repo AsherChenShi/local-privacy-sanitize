@@ -48,6 +48,8 @@ To test the switch, open a new local conversation in each mode and submit `Reply
 
 You can keep protection enabled during routine work. HTTPS links for GitHub browsing, API calls, raw files, and official documentation pass the URL check when they match the rules. File redaction and checking use the same policy. Links with tokens, signatures, credentials, or redirect parameters still trigger the detector, as do internal or ambiguous links. Other rules still check nearby text and the URL itself. Offline checks cannot tell whether a normal-looking repository link points to a private repository. See the [link rules](references/privacy-boundary.md#链接检查规则).
 
+The phone rule skips the run ID in eligible GitHub Actions links. The same digits in ordinary text still undergo the phone check. Redacting a Markdown link preserves its label and closing parenthesis. Both plugins check clear credential fields such as `access_token`, `password`, and `Authorization` together with their JSON values. Ordinary metrics such as `token_count` can pass.
+
 If you already installed a plugin, update the checkout and run its build command with a new output directory. Point the local marketplace at the new bundle, then reinstall the plugin from that updated source to refresh the host's cached copy. Updating the checkout alone leaves the installed copy in place. Choose whether to enable it in the host and review any hook prompt. Update the file redaction skill separately from the plugins.
 
 In a new local session with protection enabled, verify the two prompts below. The first link should pass the URL check. The second uses a fictional token and should be blocked.
@@ -56,6 +58,17 @@ In a new local session with protection enabled, verify the two prompts below. Th
 Describe this public project https://github.com/AsherChenShi/local-privacy-sanitize
 Check this link with a fictional token https://github.com/AsherChenShi/local-privacy-sanitize?token=SYNTHETIC_ONLY
 ```
+
+## Inspect local plugin status
+
+Run the relevant command from the repository root. Each plugin bundle also includes `scripts/privacy_status.py` inside its plugin directory.
+
+```sh
+python3 scripts/privacy_status.py codex
+python3 scripts/privacy_status.py claude --project .
+```
+
+The report shows local installation records or cached versions, configured switches, visible hook settings, and recorded trust evidence. For Claude Code, pass the client version with `--runtime-version` to compare it with the documented minimum for blocking on hook failure. The script reads local files without starting the host or changing settings. `hook_execution: not_verified` means the check still needs to be verified in a live session. The `expect_pass` and `expect_block` fields provide two fictional test prompts.
 
 ## Codex terminal controls
 

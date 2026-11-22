@@ -12,6 +12,7 @@ import sys
 import tempfile
 from threading import Thread
 
+from privacy_smoke_fixtures import CREDENTIAL_RESULT, MCP_SERVER, MCP_TOOL, METRIC_RESULT, OPAQUE_CREDENTIAL
 from url_smoke_fixtures import PRIVILEGED_URL_CASES, PUBLIC_URL_FIXTURE, PUBLIC_URLS
 
 
@@ -22,15 +23,22 @@ TOOL_CANARY = "tool-canary@example.invalid"
 BLOCK_REASON = "检测到敏感信息。请在本地生成并复核脱敏副本，再重试。"
 
 
-def events(index, invoke_tool):
+def events(index, lane, tools):
     response = {"id": f"resp_demo_{index}", "status": "completed",
                 "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}
     yield {"type": "response.created", "response": {**response, "status": "in_progress"}}
-    if invoke_tool:
+    if lane:
         item = {
             "type": "function_call", "id": "fc_demo", "call_id": "call_demo",
             "name": "exec_command", "arguments": json.dumps({"cmd": "cat fixture.txt"}),
         }
+        if lane == "mcp":
+            namespace = f"mcp__{MCP_SERVER.replace('-', '_')}"
+            namespaced = any(tool.get("type") == "namespace" and tool.get("name") == namespace
+                             for tool in tools)
+            item.update(name="sample" if namespaced else MCP_TOOL, arguments="{}")
+            if namespaced:
+                item["namespace"] = namespace
         yield {"type": "response.output_item.added", "output_index": 0, "item": item}
     else:
         item = {"type": "message", "id": "msg_demo", "role": "assistant", "content": [
@@ -56,9 +64,9 @@ class Receiver(BaseHTTPRequestHandler):
         request = json.loads(body)
         self.server.requests.append(request)
         index = len(self.server.requests)
-        invoke_tool = self.server.test_tool and index == 1
+        lane = self.server.lane if index == 1 else None
         stream = b"".join(b"data: " + json.dumps(event).encode() + b"\n\n"
-                          for event in events(index, invoke_tool))
+                          for event in events(index, lane, request.get("tools", [])))
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Content-Length", str(len(stream)))
@@ -73,7 +81,9 @@ def smoke(codex, *, plugin=False):
         workspace = root / "workspace"
         config_dir.mkdir()
         workspace.mkdir()
-        (workspace / "fixture.txt").write_text(TOOL_CANARY)
+        fixture = workspace / "fixture.txt"
+        fixture.write_text(TOOL_CANARY, encoding="utf-8")
+        mcp_stub = Path(__file__).resolve().with_name("privacy_smoke_fixtures.py")
         with HTTPServer(("127.0.0.1", 0), Receiver) as server:
             (config_dir / "config.toml").write_text(
                 'model = "gpt-5.4"\nmodel_provider = "mock"\nweb_search = "disabled"\n'
@@ -85,6 +95,9 @@ def smoke(codex, *, plugin=False):
                 f'base_url = "http://127.0.0.1:{server.server_port}/v1"\n'
                 'wire_api = "responses"\nrequires_openai_auth = false\n'
                 'request_max_retries = 0\nstream_max_retries = 0\n'
+                f'[mcp_servers."{MCP_SERVER}"]\ncommand = {json.dumps(sys.executable)}\n'
+                f'args = {json.dumps([str(mcp_stub), str(fixture), "structured"], ensure_ascii=False)}\n'
+                f'[mcp_servers."{MCP_SERVER}".tools.sample]\napproval_mode = "approve"\n'
             )
             env = {"PATH": os.environ["PATH"], "CODEX_HOME": str(config_dir),
                    "LANG": "en_US.UTF-8", "TMPDIR": str(root)}
@@ -117,9 +130,9 @@ def smoke(codex, *, plugin=False):
                 else:
                     subprocess.run([*control, "on" if value else "off"], check=True, capture_output=True)
 
-            def run(prompt, test_tool=False):
+            def run(prompt, lane=None):
                 server.requests = []
-                server.test_tool = test_tool
+                server.lane = lane
                 # These hooks came from the package or handler built by this test.
                 # Trust applies only to this isolated command and canary data.
                 result = subprocess.run(
@@ -159,23 +172,36 @@ def smoke(codex, *, plugin=False):
                 assert result.returncode == 0 and len(requests) == 1, result.stdout + result.stderr
                 model_input = json.dumps(requests, ensure_ascii=False)
                 assert "[EMAIL_001] 的虚构消息" in model_input and PROMPT_CANARY not in model_input
-                result, requests = run("Apply the local test now.", test_tool=True)
+                result, requests = run("Apply the local test now.", lane="bash")
                 assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
                 assert BLOCK_REASON in json.dumps(requests[-1], ensure_ascii=False)
                 assert TOOL_CANARY not in json.dumps(requests)
-                (workspace / "fixture.txt").write_text(PUBLIC_URL_FIXTURE, encoding="utf-8")
-                result, requests = run("Read the public link fixture.", test_tool=True)
+                fixture.write_text(PUBLIC_URL_FIXTURE, encoding="utf-8")
+                result, requests = run("Read the public link fixture.", lane="bash")
                 assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
                 assert all(url in json.dumps(requests[-1]) for url in PUBLIC_URLS)
                 for index, (url, private_value) in enumerate(PRIVILEGED_URL_CASES, start=1):
-                    (workspace / "fixture.txt").write_text(url, encoding="utf-8")
-                    result, requests = run("Read the synthetic link fixture.", test_tool=True)
+                    fixture.write_text(url, encoding="utf-8")
+                    result, requests = run("Read the synthetic link fixture.", lane="bash")
                     assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
                     assert BLOCK_REASON in json.dumps(requests[-1], ensure_ascii=False)
                     assert private_value not in json.dumps(requests), f"Tool URL fixture {index} reached the model"
-                (workspace / "fixture.txt").write_text(TOOL_CANARY, encoding="utf-8")
+                for lane in ("bash", "mcp"):
+                    fixture.write_text(json.dumps(METRIC_RESULT), encoding="utf-8")
+                    result, requests = run("Read the synthetic metric fixture.", lane=lane)
+                    assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
+                    model_input = json.dumps(requests[-1], ensure_ascii=False)
+                    assert METRIC_RESULT["status"] in model_input, f"{lane} discarded the ordinary metric"
+                    assert "token_count" in model_input and str(METRIC_RESULT["token_count"]) in model_input
+
+                    fixture.write_text(json.dumps(CREDENTIAL_RESULT), encoding="utf-8")
+                    result, requests = run("Read the synthetic credential fixture.", lane=lane)
+                    assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
+                    assert BLOCK_REASON in json.dumps(requests[-1], ensure_ascii=False)
+                    assert OPAQUE_CREDENTIAL not in json.dumps(requests), f"Credential from {lane} reached the model"
+                fixture.write_text(TOOL_CANARY, encoding="utf-8")
                 set_enabled(False)
-                result, requests = run("Apply the local test now.", test_tool=True)
+                result, requests = run("Apply the local test now.", lane="bash")
                 assert result.returncode == 0 and len(requests) == 2, result.stdout + result.stderr
                 assert TOOL_CANARY in json.dumps(requests[-1])
             finally:
@@ -195,4 +221,4 @@ if __name__ == "__main__":
         if not binary:
             sys.exit("Codex CLI was not found. Pass its executable as an argument.")
         smoke(binary, plugin=args.plugin)
-        print(f"PASS: {binary}: prompt and tool checks, including public and privileged links")
+        print(f"PASS: {binary}: prompt, links, Bash JSON and structured MCP checks")

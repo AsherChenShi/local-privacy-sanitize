@@ -2,6 +2,7 @@
 
 PUBLIC_URLS = (
     "https://github.com/octocat/Hello-World",
+    "https://github.com/octocat/Hello-World/actions/runs/13800138000",
     "https://api.github.com/repos/octocat/Hello-World/actions/runs"
     "?head_sha=0123456789abcdef0123456789abcdef01234567&per_page=3",
     "https://learn.chatgpt.com/docs/hooks#userpromptsubmit",

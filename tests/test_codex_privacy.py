@@ -58,6 +58,32 @@ class PrivacyHookTests(unittest.TestCase):
             "hook_event_name": TOOL_EVENT, "tool_response": {"content": [{"text": CANARY}]},
         }))
 
+    def test_structured_tool_credentials_block_without_echo(self):
+        self.control("install")
+        self.control("on")
+        canary = "SYNTHETIC_OPAQUE_VALUE"
+        for value in (
+            {"credentials": {"access_token": canary}},
+            {"headers": {"Authorization": "Basic " + canary}},
+            {"stdout": json.dumps({"apiKey": canary})},
+            {"content": [{"type": "resource_link", "uri": "file:///test/" + canary}]},
+        ):
+            with self.subTest(fields=list(value)):
+                result = self.run_hook(TOOL_EVENT, {"hook_event_name": TOOL_EVENT,
+                                                   "tool_response": value})
+                self.assertEqual(result["decision"], "block")
+                self.assertNotIn(canary, result["reason"])
+        result = self.run_hook(TOOL_EVENT, {"hook_event_name": TOOL_EVENT,
+                                           "tool_response": {"token_count": 1200, "elapsed_ms": 42}})
+        self.assertIsNone(result)
+
+    def test_prompt_exposes_only_fixed_detection_category(self):
+        self.control("install")
+        self.control("on")
+        result = self.prompt("service_token=SYNTHETIC_PROFILE_KEY")
+        self.assertIn("[SECRET]", result["reason"])
+        self.assertNotIn("SYNTHETIC_PROFILE_KEY", result["reason"])
+
     def test_on_allows_clean_prompt_and_locally_sanitized_placeholder(self):
         self.control("install")
         self.control("on")

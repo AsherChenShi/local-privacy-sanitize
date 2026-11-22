@@ -12,6 +12,7 @@ import tempfile
 from threading import Thread
 from urllib.parse import urlsplit
 
+from privacy_smoke_fixtures import CREDENTIAL_RESULT, MCP_SERVER, MCP_TOOL, METRIC_RESULT, OPAQUE_CREDENTIAL
 from url_smoke_fixtures import PRIVILEGED_URL_CASES, PUBLIC_URL_FIXTURE, PUBLIC_URLS
 
 
@@ -20,7 +21,6 @@ PLUGIN = "claude-privacy@local-privacy-tools"
 PROMPT_CANARY = "claude-smoke-prompt@example.invalid"
 TOOL_CANARY = "claude-smoke-tool@example.invalid"
 MODEL = "claude-sonnet-4-6"
-MCP_TOOL = "mcp__privacy-fixture__sample"
 
 
 def response_events(index, lane):
@@ -91,36 +91,13 @@ class ModelStub(BaseHTTPRequestHandler):
             self.respond("application/json", json.dumps(message).encode())
 
 
-def run_mcp_stub(fixture):
-    for line in sys.stdin:
-        request = json.loads(line)
-        if "id" not in request:
-            continue
-        method = request["method"]
-        if method == "initialize":
-            result = {
-                "protocolVersion": request["params"]["protocolVersion"],
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "privacy-fixture", "version": "1.0.0"},
-            }
-        elif method == "tools/list":
-            result = {"tools": [{
-                "name": "sample", "description": "Return a synthetic privacy fixture",
-                "inputSchema": {"type": "object", "properties": {}},
-            }]}
-        elif method == "tools/call":
-            result = {"content": [{"type": "text", "text": fixture.read_text(encoding="utf-8")}]}
-        else:
-            result = {}
-        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
-
-
 def smoke(binary, *, prompts_only):
     with tempfile.TemporaryDirectory(prefix="claude privacy smoke ") as directory:
         tmp = Path(directory)
         workspace = tmp / "workspace"
         workspace.mkdir()
         fixture = workspace / "fixture.txt"
+        mcp_stub = Path(__file__).resolve().with_name("privacy_smoke_fixtures.py")
         fixture.write_text(TOOL_CANARY + "\n", encoding="utf-8")
         marketplace = tmp / "market"
         subprocess.run(
@@ -160,15 +137,15 @@ def smoke(binary, *, prompts_only):
                     )
                 return result
 
-            def run(prompt, *, lane=None, expect_success=True):
+            def run(prompt, *, lane=None, expect_success=True, structured=False):
                 server.requests = []
                 server.lane = lane
                 mcp_servers = {}
                 allowed_tool = "Bash(cat fixture.txt)"
                 if lane == "mcp":
-                    mcp_servers["privacy-fixture"] = {
+                    mcp_servers[MCP_SERVER] = {
                         "type": "stdio", "command": sys.executable,
-                        "args": [str(Path(__file__).resolve()), "--mock-mcp", str(fixture)],
+                        "args": [str(mcp_stub), str(fixture), "structured" if structured else "text"],
                     }
                     allowed_tool = MCP_TOOL
                 result = cli([
@@ -218,20 +195,30 @@ def smoke(binary, *, prompts_only):
                         assert len(json.loads(requests)) >= 2, "No tool-result request reached the mock"
                         assert "Privacy check blocked" in requests, "Model received no URL replacement"
                         assert private_value not in requests, f"Privileged {lane} fixture {index} reached the model"
+
+                    fixture.write_text(json.dumps(METRIC_RESULT), encoding="utf-8")
+                    _, requests = run("Read the synthetic metric fixture.", lane=lane, structured=True)
+                    assert len(json.loads(requests)) >= 2, "No tool-result request reached the mock"
+                    assert METRIC_RESULT["status"] in requests, f"{lane} discarded the ordinary metric"
+                    assert "token_count" in requests and str(METRIC_RESULT["token_count"]) in requests
+
+                    fixture.write_text(json.dumps(CREDENTIAL_RESULT), encoding="utf-8")
+                    _, requests = run("Read the synthetic credential fixture.", lane=lane, structured=True)
+                    assert len(json.loads(requests)) >= 2, "No tool-result request reached the mock"
+                    assert "Privacy check blocked" in requests, "Model received no credential replacement"
+                    assert OPAQUE_CREDENTIAL not in requests, f"Credential from {lane} reached the model"
+
                     fixture.write_text(TOOL_CANARY + "\n", encoding="utf-8")
                     cli(["plugin", "disable", PLUGIN, "--scope", "user"])
                     _, requests = run("Read the synthetic fixture.", lane=lane)
                     assert TOOL_CANARY in requests, "Disabled plugin prevented the raw tool-result control"
-                    print(f"PASS: native {lane} replacement, including links, and disabled control")
+                    print(f"PASS: native {lane} replacement, including links and structured credentials")
             finally:
                 server.shutdown()
                 thread.join()
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--mock-mcp":
-        run_mcp_stub(Path(sys.argv[2]))
-        sys.exit()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path, help="Path to an installed Claude Code binary")
     parser.add_argument("--prompts-only", action="store_true", help="Skip the tool smoke checks")

@@ -63,6 +63,43 @@ class PublicURLTests(unittest.TestCase):
         self.assert_preserved(f"查看[仓库]({REPO})。详见 <{DOCS}#userpromptsubmit>。")
         self.assert_preserved(f"Use `{REPO}` and `{DOCS}`.")
 
+    def test_markdown_link_structure_survives_url_redaction(self):
+        source = ("See [build](https://ci.internal.test/foo(bar))"
+                  "[repo](https://github.com/octocat/Hello-World?token=SYNTHETIC_ONLY).")
+        candidate, report = SANITIZER.sanitize(source)
+        self.assertEqual(candidate, "See [build]([URL_001])[repo]([URL_002]).")
+        self.assertEqual(report["occurrences"], {"URL": 2})
+        self.assertTrue(SANITIZER.scan_value(source))
+
+    def test_only_the_workflow_run_id_avoids_the_phone_rule(self):
+        run_id = "13800138000"
+        for url in (f"{REPO}/actions/runs/{run_id}", f"{API}/actions/runs/{run_id}"):
+            with self.subTest(url=url):
+                self.assert_preserved(url)
+                source = f"查看[构建]({url})，值班电话 {run_id}。"
+                candidate, report = SANITIZER.sanitize(source)
+                self.assertEqual(candidate, f"查看[构建]({url})，值班电话 [PHONE_001]。")
+                self.assertEqual(report["occurrences"], {"PHONE": 1})
+                self.assert_redacted(f"{url}?token={FIXTURE}")
+                self.assert_redacted(f"{url}?X-Amz-Signature={FIXTURE}")
+                policy = (SANITIZER.Entity("SENSITIVE", (run_id,)),)
+                self.assertTrue(SANITIZER.scan_value(url, policy))
+        self.assertTrue(SANITIZER.scan_value(f"{REPO}/blob/main/{run_id}"))
+        self.assertTrue(SANITIZER.scan_value(f"{REPO}/actions/runs/{run_id}/custom/data"))
+        self.assert_redacted(f"https://intranet.test/actions/runs/{run_id}")
+
+    def test_encoded_pii_inside_otherwise_public_links_is_redacted(self):
+        encoded_phone = "".join(f"%{ord(digit):02X}" for digit in "13800138000")
+        for url in (
+            f"https://docs.github.com/en/reference/{encoded_phone}",
+            f"{DOCS}#contact-{encoded_phone}",
+            f"{DOCS}?view={encoded_phone}",
+            f"{DOCS}?view=10%2E20%2E30%2E40",
+        ):
+            with self.subTest(url=url):
+                self.assert_redacted(url)
+        self.assert_preserved("https://docs.github.com/zh-CN/actions/%E6%A6%82%E8%A7%88")
+
     def test_ordinary_github_api_response_metadata_is_not_blocked(self):
         metadata = {
             "html_url": REPO,

@@ -13,6 +13,7 @@ FILES = {
     PLUGIN / "hooks/hooks.json": "desktop/hooks.json",
     PLUGIN / "scripts/codex_privacy.py": "scripts/codex_privacy.py",
     PLUGIN / "scripts/sanitize.py": "scripts/sanitize.py",
+    PLUGIN / "scripts/privacy_status.py": "scripts/privacy_status.py",
 }
 
 

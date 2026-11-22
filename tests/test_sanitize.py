@@ -82,6 +82,30 @@ class RedactionTests(unittest.TestCase):
                 self.assertNotIn("DEMO_ONLY", result)
                 self.assertIn("[SECRET_001]", result)
 
+    def test_explicit_environment_and_http_credentials_are_fully_removed(self):
+        for source, label in (
+            ("SERVICE_TOKEN=DEMO_ONLY", "SERVICE_TOKEN="),
+            ("Authorization: Basic DEMO_ONLY", "Authorization: "),
+            ("Set-Cookie: session=DEMO_ONLY; refresh=DEMO_MORE", "Set-Cookie: "),
+        ):
+            with self.subTest(label=label):
+                result, report = module.sanitize(source)
+                self.assertEqual(result, label + "[SECRET_001]")
+                self.assertEqual(report["occurrences"], {"SECRET": 1})
+
+    def test_structured_scanner_checks_fields_even_after_json_decoding(self):
+        escaped = r'{"\u0061ccess_token":"DEMO_ONLY"}'
+        self.assertEqual(module.scan_kind(escaped), "SECRET")
+        self.assertEqual(module.scan_kind({"stdout": escaped}), "SECRET")
+        self.assertEqual(module.scan_kind({"ＡＰＩＫｅｙ": "DEMO_ONLY"}), "SECRET")
+        self.assertEqual(module.scan_kind({"password": 0}), "SECRET")
+        self.assertIsNone(module.scan_kind({"token_count": 1200, "access_token": None}))
+        self.assertIsNone(module.scan_kind({"access_token": "[SECRET_001]", "password": " "}))
+        with self.assertRaisesRegex(module.Rejected, "RESIDUAL_KNOWN_MATCH"):
+            module.sanitize(escaped)
+        with self.assertRaisesRegex(module.Rejected, "DUPLICATE_JSON_KEY"):
+            module.scan_kind('{"Authorization":"Basic DEMO_ONLY","Authorization":""}')
+
     def test_multiline_private_key(self):
         source = "before\n-----BEGIN PRIVATE KEY-----\nDEMO_ONLY\n-----END PRIVATE KEY-----\nafter"
         self.assertEqual(module.sanitize(source)[0], "before\n[SECRET_001]\nafter")

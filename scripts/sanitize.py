@@ -16,7 +16,7 @@ import sys
 import unicodedata
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 MAX_BYTES = 2 * 1024 * 1024
 MAX_POLICY_BYTES = 256 * 1024
 MAX_MATCHES = 20000
@@ -71,7 +71,7 @@ def _unique_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise Rejected("INVALID_POLICY")
+            raise Rejected("DUPLICATE_JSON_KEY")
         result[key] = value
     return result
 
@@ -79,7 +79,7 @@ def _unique_object(pairs):
 def parse_policy(data: str) -> tuple[Entity, ...]:
     try:
         obj = json.loads(data, object_pairs_hook=_unique_object)
-    except (ValueError, TypeError, RecursionError):
+    except (Rejected, ValueError, TypeError, RecursionError):
         raise Rejected("INVALID_POLICY") from None
     if not isinstance(obj, dict) or set(obj) != {"entities"}:
         raise Rejected("INVALID_POLICY")
@@ -112,10 +112,13 @@ def parse_policy(data: str) -> tuple[Entity, ...]:
 
 
 # Rules are deliberately conservative. Detection coverage is stated in the report.
-URL = re.compile(
-    r"(?<![A-Za-z0-9_])(?:https?|ftp|sftp|ssh|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?)"
-    r"://[^\s<>\"'`，。；！？）]+", re.I,
+URL_START = re.compile(
+    r"(?<![A-Za-z0-9_])(?:https?|ftp|sftp|ssh|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?)://",
+    re.I,
 )
+URL_DELIMITERS = "<>\"'`，。；！？）"
+URL_BODY = re.compile(r"[^\s" + re.escape(URL_DELIMITERS) + "]+")
+MARKDOWN_LINK_START = re.compile(r"(?<!\\)\[[^\[\]\r\n]*\]\([ \t]*\Z")
 RULES = [
     ("EMAIL", re.compile(r"(?<![A-Za-z0-9_.+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?\.[A-Za-z]{2,63}(?![A-Za-z0-9-])"), 80),
     ("CNID", re.compile(r"(?<![A-Za-z0-9])\d{17}[\dXx](?![A-Za-z0-9])"), 85),
@@ -127,9 +130,15 @@ RULES = [
     ("SECRET", re.compile(r"\bBearer[ \t]+(?P<value>[A-Za-z0-9._~+/-]+={0,2})", re.I), 100),
     ("ACCOUNT", re.compile(r"(?:银行卡|卡号|账号|账户|工号|证件号)[\"']?[ \t]*[:=：][ \t]*[\"']?(?P<value>[A-Za-z0-9][A-Za-z0-9_-]{2,})"), 60),
 ]
-SECRET_LABEL = r"(?:\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|password|passwd|secret)\b|密码|口令|密钥|令牌)[\"']?[ \t]*[:=：][ \t]*"
+SECRET_NAMES = (r"api[_ -]?key|private[_ -]?key|(?:access|refresh|auth|service)[_ -]?token|"
+                r"client[_ -]?secret|password|passwd|secret|密码|口令|密钥|令牌")
+AUTH_HEADERS = r"(?:proxy[-_ ])?authorization|(?:set[-_ ])?cookie"
+SECRET_FIELD = re.compile(rf"(?:{SECRET_NAMES}|{AUTH_HEADERS})", re.I)
+SECRET_LABEL = rf"(?:\b(?:{SECRET_NAMES})\b|密码|口令|密钥|令牌)[\"']?[ \t]*[:=：][ \t]*"
 CREDENTIAL = re.compile(SECRET_LABEL + r"(?P<value>\"(?:\\.|[^\"\\\r\n])*\"|'(?:\\.|[^'\\\r\n])*'|[^\s\[\]\"',;，；。}]+)", re.I)
 RULES.append(("SECRET", CREDENTIAL, 100))
+RULES.append(("SECRET", re.compile(rf"^[ \t]*(?:{AUTH_HEADERS})[ \t]*:[ \t]*(?P<value>[^\s][^\r\n]*)",
+                                   re.I | re.M), 100))
 QUOTED_SECRET_HEADER = re.compile(SECRET_LABEL + r"[\"']", re.I)
 PEM = re.compile(r"-----BEGIN ((?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY)-----[\s\S]*?-----END \1-----")
 PEM_HEADER = re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----")
@@ -188,10 +197,49 @@ URL_SECRET_SEGMENTS = re.compile(
 )
 BAD_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
 URL_SECRET_PATTERNS = tuple(pattern for kind, pattern, _ in RULES if kind in ("SECRET", "EMAIL"))
+URL_PII_PATTERNS = tuple(pattern for kind, pattern, _ in RULES if kind in ("PHONE", "CNID", "SSN"))
 GITHUB_NAME = re.compile(r"[A-Za-z0-9_.-]+")
 GITHUB_API_TEMPLATE = re.compile(
     r"/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:git/refs|git/commits|commits)\{/sha\}"
 )
+GITHUB_RUN_URL = re.compile(
+    r"(?i:https://(?:github\.com/|api\.github\.com/repos/))"
+    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/(?P<id>[1-9][0-9]{0,11})/?(?=[?#]|\Z)"
+)
+
+
+def _markdown_url_end(text, body_start):
+    nesting = 0
+    escaped = False
+    for end in range(body_start, len(text)):
+        char = text[end]
+        if char.isspace() or char in URL_DELIMITERS:
+            return end
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == "(":
+            nesting += 1
+        elif char == ")":
+            if not nesting:
+                return end
+            nesting -= 1
+    return len(text)
+
+
+def _url_spans(text):
+    cursor = 0
+    while start := URL_START.search(text, cursor):
+        # Bound the search for an inline Markdown label. The ordinary path keeps
+        # the conservative URL extent, including a trailing parenthesis.
+        if MARKDOWN_LINK_START.search(text[max(0, start.start() - 512):start.start()]):
+            cursor = _markdown_url_end(text, start.end())
+        else:
+            body = URL_BODY.match(text, start.end())
+            cursor = body.end() if body else start.end()
+        if cursor > start.end():
+            yield start.start(), cursor
 
 
 def github_public_path(host, path):
@@ -254,6 +302,18 @@ def public_url_candidate(url):
            for rule in URL_SECRET_PATTERNS):
         return False
 
+    # Plain-text rules see the original URL. Repeat the relevant checks when
+    # percent-encoding or form-query decoding can conceal sensitive characters.
+    encoded_values = []
+    if "%" in parts.path:
+        encoded_values.append(path)
+    if "%" in parts.fragment:
+        encoded_values.append(fragment)
+    if "%" in parts.query or "+" in parts.query:
+        encoded_values.extend(value for _, value in query)
+    if any(_decoded_url_pii(value) for value in encoded_values):
+        return False
+
     if authority in DOC_PATHS:
         if not any(prefix == "/" or path == prefix or path.startswith(prefix + "/")
                    for prefix in DOC_PATHS[authority]):
@@ -285,6 +345,23 @@ def _luhn(number: str) -> bool:
     return total % 10 == 0
 
 
+def _decoded_url_pii(value):
+    try:
+        value, _ = normalize(value)
+    except Rejected:
+        return True
+    return (any(pattern.search(value) for pattern in URL_SECRET_PATTERNS + URL_PII_PATTERNS)
+            or any(_luhn(match.group()) for match in CARD.finditer(value))
+            or any(_valid_ip(match.group()) for match in IPV4.finditer(value)))
+
+
+def _valid_ip(value):
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        return None
+
+
 def find_matches(text: str, entities: tuple[Entity, ...] = ()) -> list[Match]:
     candidates = []
     def add(match):
@@ -292,9 +369,15 @@ def find_matches(text: str, entities: tuple[Entity, ...] = ()) -> list[Match]:
             raise Rejected("TOO_MANY_MATCHES")
         candidates.append(match)
 
-    for match in URL.finditer(text):
-        if not public_url_candidate(match.group()):
-            add(Match(*match.span(), "URL", match.group(), 90))
+    run_ids = set()
+    for start, end in _url_spans(text):
+        url = text[start:end]
+        if not public_url_candidate(url):
+            add(Match(start, end, "URL", url, 90))
+            continue
+        run = GITHUB_RUN_URL.match(url.rstrip(".,!)]"))
+        if run:
+            run_ids.add((start + run.start("id"), start + run.end("id")))
 
     credential_ends = {}
     for match in CREDENTIAL.finditer(text):
@@ -316,6 +399,8 @@ def find_matches(text: str, entities: tuple[Entity, ...] = ()) -> list[Match]:
             span = match.span("value") if "value" in match.re.groupindex else match.span()
             value = text[span[0]:span[1]]
             if kind == "PHONE":
+                if span in run_ids:
+                    continue
                 value = re.sub(r"[^0-9]", "", value)[-11:]
             elif kind == "EMAIL":
                 local, domain = value.rsplit("@", 1)
@@ -329,11 +414,9 @@ def find_matches(text: str, entities: tuple[Entity, ...] = ()) -> list[Match]:
             add(Match(*match.span(), "CARD", value, 65))
     for pattern in (IPV4, IPV6):
         for match in pattern.finditer(text):
-            try:
-                value = str(ipaddress.ip_address(match.group()))
-            except ValueError:
-                continue
-            add(Match(*match.span(), "IP", value, 50))
+            value = _valid_ip(match.group())
+            if value is not None:
+                add(Match(*match.span(), "IP", value, 50))
     for group_id, entity in enumerate(entities):
         for value in entity.values:
             # Literal and case-sensitive. Short aliases are intentionally explicit.
@@ -386,10 +469,8 @@ def sanitize(text: str, entities: tuple[Entity, ...] = ()) -> tuple[str, dict]:
         occurrences[match.kind] += 1
     parts.append(original[cursor:])
     output = "".join(parts)
-    # Scan all remaining text, not only the spans selected in the first pass.
-    residual, _ = normalize(output)
-    residual = PLACEHOLDER.sub(lambda m: " " * len(m.group()), residual)
-    if find_matches(residual, entities):
+    # Also reject candidates whose remaining structured credentials cannot be replaced as text.
+    if scan_kind(output, entities):
         raise Rejected("RESIDUAL_KNOWN_MATCH")
     report = {
         "version": VERSION,
@@ -406,20 +487,59 @@ def sanitize(text: str, entities: tuple[Entity, ...] = ()) -> tuple[str, dict]:
     return output, report
 
 
-def scan_value(value, entities=()):
-    """Check text in a JSON value for known matches without exposing the value."""
+def credential_value_present(value):
+    if isinstance(value, str):
+        text, _ = normalize(value)
+        text = text.strip()
+        return bool(text) and not PLACEHOLDER.fullmatch(text)
+    if isinstance(value, (list, dict)):
+        return bool(value)
+    return value is not None and not isinstance(value, bool)
+
+
+def scan_kind(value, entities=(), *, parse_text=True):
+    """Return the first fixed classification found in a hook value, without its contents."""
     if isinstance(value, dict):
-        if value.get("type") in ("image", "audio", "resource"):
-            raise ValueError("unsupported tool content")
-        return any(scan_value(key, entities) or scan_value(child, entities)
-                   for key, child in value.items())
+        if value.get("type") in ("image", "audio", "resource", "resource_link", "binary"):
+            raise Rejected("UNSUPPORTED_TOOL_CONTENT")
+        for key, child in value.items():
+            normalized, _ = normalize(key)
+            if SECRET_FIELD.fullmatch(normalized.strip()) and credential_value_present(child):
+                return "SECRET"
+            kind = scan_kind(key, entities, parse_text=False) or scan_kind(child, entities, parse_text=parse_text)
+            if kind:
+                return kind
+        return None
     if isinstance(value, list):
-        return any(scan_value(child, entities) for child in value)
+        for child in value:
+            kind = scan_kind(child, entities, parse_text=parse_text)
+            if kind:
+                return kind
+        return None
     if value is None or isinstance(value, bool):
-        return False
+        return None
     text, _ = normalize(str(value))
     candidate = PLACEHOLDER.sub(lambda match: " " * len(match.group()), text)
-    return bool(find_matches(candidate, entities))
+    matches = find_matches(candidate, entities)
+    if matches:
+        return matches[0].kind
+    return scan_json_text(text, entities) if parse_text else None
+
+
+def scan_json_text(text, entities):
+    stripped = text.strip()
+    if not ((stripped.startswith("{") and stripped.endswith("}"))
+            or (stripped.startswith("[") and stripped.endswith("]"))):
+        return None
+    try:
+        value = json.loads(stripped, object_pairs_hook=_unique_object)
+    except json.JSONDecodeError:
+        return None
+    return scan_kind(value, entities, parse_text=False)
+
+
+def scan_value(value, entities=()):
+    return scan_kind(value, entities) is not None
 
 
 def read_local(path: Path, limit: int, suffixes: set[str]) -> str:
@@ -496,12 +616,19 @@ def main(argv=None) -> int:
             return 0
         normalized, _ = normalize(source)
         # check accepts generated placeholders, but never interprets them as approval.
-        normalized = PLACEHOLDER.sub(lambda m: " " * len(m.group()), normalized)
-        matches = _merge_overlaps(find_matches(normalized, entities), normalized)
-        print(json.dumps({"status": "KNOWN_MATCHES_FOUND" if matches else "NO_KNOWN_MATCHES",
+        candidate = PLACEHOLDER.sub(lambda m: " " * len(m.group()), normalized)
+        matches = _merge_overlaps(find_matches(candidate, entities), candidate)
+        if not matches:
+            kind = scan_json_text(normalized, entities)
+            if kind:
+                print(json.dumps({"status": "KNOWN_MATCHES_FOUND", "occurrences": {},
+                                  "structured_match": kind, "review_required": True}))
+                return 3
+        found = bool(matches)
+        print(json.dumps({"status": "KNOWN_MATCHES_FOUND" if found else "NO_KNOWN_MATCHES",
                           "occurrences": dict(Counter(m.kind for m in matches)),
                           "review_required": True}))
-        return 3 if matches else 0
+        return 3 if found else 0
     except Rejected as error:
         print(json.dumps({"status": "BLOCKED", "code": str(error)}), file=sys.stderr)
         return 2

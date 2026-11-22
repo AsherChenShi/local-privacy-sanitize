@@ -58,6 +58,8 @@ python3 scripts/install_skill.py --target claude
 
 日常可以保持保护开启。符合规则的 HTTPS GitHub 浏览、API、原始文件及官方文档链接可通过 URL 检查，文件脱敏和复检也使用同一套规则。带令牌、签名、登录信息或重定向参数的链接，以及内网和不明确的链接，仍会命中。公开链接旁的邮箱和凭据等内容会分别检查。离线检查无法判断一个外观正常的仓库链接对应公开还是私有仓库。具体匹配条件见 [链接检查规则](references/privacy-boundary.md#链接检查规则)。
 
+符合条件的 GitHub Actions 运行编号按链接中的编号处理，同一个号码出现在普通正文时仍会接受手机号检查。脱敏 Markdown 链接时，链接标题和闭合括号会保留。两个插件也会结合 JSON 的字段名和值检查 `access_token`、`password`、`Authorization` 等明确的凭据字段，`token_count` 等普通统计仍可通过。
+
 如果已经安装插件，请先更新仓库，用上面的构建命令生成新包。每次构建请选用尚不存在的输出目录。用新版目录更新本地插件来源，再从更新后的来源重新安装对应插件，以刷新宿主缓存。只更新仓库不会替换已安装的副本。在各自的插件界面选择是否启用，出现 Hook 审核提示时重新审核。文件脱敏 skill 与两个宿主插件分别更新。
 
 在启用保护的新本地会话中，可以用下面这两条文本复验。第一条应通过 URL 检查，第二条使用虚构令牌，应被拦截。
@@ -66,6 +68,17 @@ python3 scripts/install_skill.py --target claude
 请说明这个公开项目的用途：https://github.com/AsherChenShi/local-privacy-sanitize
 测试这个含虚构令牌的链接：https://github.com/AsherChenShi/local-privacy-sanitize?token=SYNTHETIC_ONLY
 ```
+
+## 只读检查插件状态
+
+在仓库根目录运行对应命令。通过安装包获取插件时，也可运行对应插件目录内的 `scripts/privacy_status.py`。
+
+```bash
+python3 scripts/privacy_status.py codex
+python3 scripts/privacy_status.py claude --project .
+```
+
+检查结果分别列出本地安装记录或缓存版本、配置开关、可见的 Hook 设置和信任记录。Claude Code 可用 `--runtime-version` 传入客户端显示的版本，检查它是否达到文档要求的失败阻断版本。脚本不启动客户端、不修改配置。`hook_execution: not_verified` 表示尚需在新会话中实际验证。输出里的 `expect_pass` 和 `expect_block` 提供两条虚构测试提示词。
 
 ## Codex 终端切换方式
 

@@ -22,6 +22,7 @@ def validate(root):
         "claude-desktop/marketplace.json", "claude-desktop/plugin.json", "claude-desktop/hooks.json",
         "tests/test_claude_plugin.py", "tests/claude_smoke.py",
         "tests/test_public_urls.py", "tests/url_smoke_fixtures.py",
+        "scripts/privacy_status.py", "tests/test_privacy_status.py", "tests/privacy_smoke_fixtures.py",
         ".github/workflows/ci.yml",
     )
     for relative in required:
@@ -63,8 +64,8 @@ def validate(root):
     if not {"private/", "raw/", "out/", "*.local.json", "*.local.txt", ".env"}.issubset(ignored):
         errors.append("missing_private_artifact_ignores")
     allowed = {"__future__", "argparse", "collections", "dataclasses", "hashlib", "ipaddress",
-               "json", "os", "pathlib", "re", "stat", "sys", "unicodedata", "sanitize"}
-    for relative in ("scripts/sanitize.py", "scripts/claude_privacy.py"):
+               "json", "os", "pathlib", "re", "stat", "sys", "tomllib", "unicodedata", "sanitize"}
+    for relative in ("scripts/sanitize.py", "scripts/claude_privacy.py", "scripts/privacy_status.py"):
         source = (root / relative).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.Import) and any(alias.name.split(".")[0] not in allowed for alias in node.names):

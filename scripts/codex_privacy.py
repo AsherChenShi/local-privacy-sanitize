@@ -10,7 +10,7 @@ import shlex
 import sys
 import tempfile
 
-from sanitize import MAX_BYTES, MAX_POLICY_BYTES, Rejected, parse_policy, read_local, scan_value
+from sanitize import MAX_BYTES, MAX_POLICY_BYTES, Rejected, parse_policy, read_local, scan_kind
 
 
 EVENT_FIELDS = {"UserPromptSubmit": "prompt", "PostToolUse": "tool_response"}
@@ -151,8 +151,9 @@ def run_hook(state, event, *, controlled_by_plugin=False):
         value = payload[EVENT_FIELDS[event]]
         if event == "UserPromptSubmit" and not isinstance(value, str):
             return block(BLOCK_ERROR)
-        if scan_value(value, read_entities(state)):
-            return block(BLOCK_MATCH)
+        kind = scan_kind(value, read_entities(state))
+        if kind:
+            return block(f"{BLOCK_MATCH} [{kind}]" if event == "UserPromptSubmit" else BLOCK_MATCH)
     except Exception:
         return block(BLOCK_ERROR)
     return 0

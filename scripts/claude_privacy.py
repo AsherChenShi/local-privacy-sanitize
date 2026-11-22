@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import sys
 
-from sanitize import MAX_BYTES, MAX_POLICY_BYTES, parse_policy, read_local, scan_value
+from sanitize import MAX_BYTES, MAX_POLICY_BYTES, parse_policy, read_local, scan_kind
 
 
 PROMPT = "UserPromptSubmit"
@@ -34,7 +34,7 @@ def read_event(expected):
     return event
 
 
-def tool_requires_replacement(response, lane, entities):
+def inspect_tool(response, lane, entities):
     if lane == "bash":
         if (not isinstance(response, dict)
                 or not all(isinstance(response.get(key), str) for key in ("stdout", "stderr"))
@@ -42,9 +42,22 @@ def tool_requires_replacement(response, lane, entities):
             raise ValueError("unsupported Bash result")
         if response["isImage"]:
             raise ValueError("opaque Bash result")
-    elif not isinstance(response, (str, list, dict)):
-        raise ValueError("unsupported MCP result")
-    return scan_value(response, entities)
+    else:
+        if isinstance(response, dict):
+            if not isinstance(response.get("structuredContent", {}), dict):
+                raise ValueError("unsupported MCP structured result")
+            items = response.get("content", [])
+        elif isinstance(response, list):
+            items = response
+        elif isinstance(response, str):
+            items = []
+        else:
+            raise ValueError("unsupported MCP result")
+        if not isinstance(items, list) or any(
+                not isinstance(item, dict) or item.get("type") != "text"
+                or not isinstance(item.get("text"), str) for item in items):
+            raise ValueError("unsupported MCP content")
+    return scan_kind(response, entities)
 
 
 def tool_replacement(response, lane, reason):
@@ -55,7 +68,7 @@ def tool_replacement(response, lane, reason):
         output = reason
     else:
         content = [{"type": "text", "text": reason}]
-        output = {"content": content} if isinstance(response, dict) and "content" in response else content
+        output = {"content": content} if isinstance(response, dict) else content
     # Claude's PostToolUse "block" alone leaves the original result model-visible.
     return {"hookSpecificOutput": {"hookEventName": TOOL, "updatedToolOutput": output}}
 
@@ -68,22 +81,25 @@ def decision(event_name, lane):
             value = event["prompt"]
             if not isinstance(value, str):
                 raise ValueError("unsupported prompt")
-            matched = scan_value(value, local_entities())
+            kind = scan_kind(value, local_entities())
         else:
             response = event["tool_response"]
             tool_name = event["tool_name"]
             if (lane == "bash" and tool_name != "Bash") or (
                     lane == "mcp" and not tool_name.startswith("mcp__")):
                 raise ValueError("unexpected tool")
-            matched = tool_requires_replacement(response, lane, local_entities())
-        if not matched:
+            kind = inspect_tool(response, lane, local_entities())
+        if not kind:
             return None
-        reason = SENSITIVE
+        reason = f"{SENSITIVE} [{kind}]" if event_name == PROMPT else SENSITIVE
     except Exception:
         reason = CHECK_ERROR
 
     if event_name == PROMPT:
-        return {"decision": "block", "reason": reason}
+        return {
+            "decision": "block", "reason": reason,
+            "hookSpecificOutput": {"hookEventName": PROMPT, "suppressOriginalPrompt": True},
+        }
     return tool_replacement(response, lane, reason)
 
 
