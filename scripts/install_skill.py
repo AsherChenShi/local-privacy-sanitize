@@ -14,6 +14,12 @@ PAYLOAD = (
     "scripts/structured_redaction.py",
     "scripts/review_policy.py",
     "scripts/review_preview.py",
+    "scripts/hook_supervisor.py",
+    "scripts/preflight.py",
+    "scripts/preflight_ui/index.html",
+    "scripts/preflight_ui/preflight.css",
+    "scripts/preflight_ui/preflight.js",
+    "open-preflight.command",
     "references/privacy-boundary.md",
     "references/architecture.md",
 )
@@ -33,7 +39,7 @@ def install(source, destination):
             output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             with (source / relative).open("rb") as reader, output.open("xb") as writer:
                 shutil.copyfileobj(reader, writer)
-            output.chmod(0o600)
+            output.chmod(0o700 if output.suffix == ".command" else 0o600)
     except BaseException:
         shutil.rmtree(destination)
         raise
@@ -45,8 +51,8 @@ def main(argv=None):
     parser.add_argument("--target", choices=("codex", "claude"), default="codex")
     parser.add_argument("--destination", type=Path, help="Optional explicit destination for testing or project scope")
     args = parser.parse_args(argv)
-    base = (Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills"
-            if args.target == "codex" else Path.home() / ".claude" / "skills")
+    variable, default = ("CODEX_HOME", ".codex") if args.target == "codex" else ("CLAUDE_CONFIG_DIR", ".claude")
+    base = Path(os.environ.get(variable) or Path.home() / default) / "skills"
     destination = args.destination or base / "local-privacy-sanitize"
     try:
         count = install(Path(__file__).resolve().parents[1], destination)

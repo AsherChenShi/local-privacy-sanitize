@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -20,6 +21,7 @@ def load(name):
 
 installer = load("install_skill")
 validator = load("validate_release")
+builder = load("build_codex_plugin")
 
 
 class PackageTests(unittest.TestCase):
@@ -51,6 +53,35 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(files, sorted(installer.PAYLOAD))
         for relative in installer.PAYLOAD:
             self.assertEqual((ROOT / relative).read_bytes(), (destination / relative).read_bytes())
+        self.assertEqual((destination / "open-preflight.command").stat().st_mode & 0o777, 0o700)
+
+    def test_installs_skill_into_custom_claude_config(self):
+        config = self.root / "Claude config"
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/install_skill.py"), "--target", "claude"],
+                                env={**os.environ, "HOME": str(self.root), "CLAUDE_CONFIG_DIR": str(config)},
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout)["target"], "claude")
+        self.assertTrue((config / "skills/local-privacy-sanitize/SKILL.md").is_file())
+        self.assertFalse((self.root / ".claude").exists())
+
+    def test_packaging_preserves_existing_outputs_and_cleans_failed_build(self):
+        destination = self.root / "plugin-0.2.6"
+        archive = self.root / "plugin-0.2.6.zip"
+        archive.write_bytes(b"existing archive")
+        with self.assertRaises(FileExistsError):
+            builder.build(destination)
+        self.assertFalse(destination.exists())
+        self.assertEqual(archive.read_bytes(), b"existing archive")
+        archive.unlink()
+        with self.assertRaises(FileNotFoundError):
+            builder.build(destination, {Path("missing"): "missing-source.txt"})
+        self.assertFalse(destination.exists())
+        self.assertFalse(archive.exists())
+        builder.build(destination)
+        self.assertTrue(archive.is_file())
+        with self.assertRaises(FileExistsError):
+            builder.build(destination)
+        self.assertTrue((destination / ".agents/plugins/marketplace.json").is_file())
 
     def test_install_does_not_replace_existing_skill(self):
         destination = self.root / "installed"

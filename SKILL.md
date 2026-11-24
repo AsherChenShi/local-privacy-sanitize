@@ -17,6 +17,8 @@ description: 使用离线本地程序为 UTF-8 文本生成敏感信息脱敏候
 
 ## 操作
 
+用户也可以在本机双击 `open-preflight.command`，或从技能目录运行 `python3 scripts/preflight.py`。在浏览器窗口粘贴文字或选择文件，复核后自行复制或下载候选。Agent 不应代为读取预检窗口、剪贴板或未经复核的候选。[窗口安全边界](references/privacy-boundary.md#本地预检窗口)
+
 将下面的 `/path/to/local-privacy-sanitize` 替换为本 SKILL.md 所在目录的绝对路径；输入、策略及输出路径由用户指定。不要把原文或真实实体值放进命令参数、环境变量或聊天。省略 `--policy` 时只有结构化规则覆盖。
 
 ```bash

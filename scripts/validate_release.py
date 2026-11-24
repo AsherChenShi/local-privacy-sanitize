@@ -30,6 +30,9 @@ def validate(root):
         "tests/test_claude_plugin.py", "tests/claude_smoke.py",
         "tests/test_public_urls.py", "tests/url_smoke_fixtures.py",
         "scripts/privacy_status.py", "tests/test_privacy_status.py", "tests/privacy_smoke_fixtures.py",
+        "scripts/preflight.py", "scripts/preflight_ui/index.html", "scripts/preflight_ui/preflight.js",
+        "scripts/preflight_ui/preflight.css", "open-preflight.command", "tests/test_preflight.py",
+        "tests/preflight_browser_smoke.js", "references/personal-use-review.md",
         ".github/workflows/ci.yml",
     )
     for relative in required:
@@ -44,7 +47,8 @@ def validate(root):
     if "[TODO:" in skill:
         errors.append("unfinished_scaffold")
     for relative in ("README.md", "README.en.md", "SKILL.md",
-                     "references/privacy-boundary.md", "references/architecture.md", "references/signup-lab.md"):
+                     "references/privacy-boundary.md", "references/architecture.md", "references/signup-lab.md",
+                     "references/personal-use-review.md"):
         content = (root / relative).read_text(encoding="utf-8")
         for link in re.findall(r"\[[^\]]+\]\(([^)]+)\)", content):
             if "://" not in link and not link.startswith("#"):
@@ -79,10 +83,11 @@ def validate(root):
         "scripts/structured_redaction.py": {"bisect", "html"},
         "scripts/review_policy.py": {"bisect"},
         "scripts/review_preview.py": {"base64"},
+        "scripts/preflight.py": {"hmac", "http", "secrets", "webbrowser"},
     }
     for relative in ("scripts/sanitize.py", "scripts/claude_privacy.py", "scripts/privacy_status.py",
                      "scripts/structured_redaction.py", "scripts/hook_supervisor.py",
-                     "scripts/review_policy.py", "scripts/review_preview.py"):
+                     "scripts/review_policy.py", "scripts/review_preview.py", "scripts/preflight.py"):
         allowed_imports = allowed | extra_imports.get(relative, set())
         source = (root / relative).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(source)):

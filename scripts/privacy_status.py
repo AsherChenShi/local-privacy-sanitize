@@ -222,6 +222,7 @@ def protection_notice(host, status):
         "message_zh": ("当前配置有关闭的检查，相关发送路径未受保护。请先本地预检。" if disabled else
                        "当前会话的 Hook 尚未验证。敏感内容请按未受保护处理，先本地预检。"),
         "local_preflight": "python3 scripts/sanitize.py sanitize --input draft.md --out-dir out/review",
+        "local_preflight_window": "python3 scripts/preflight.py",
     }
 
 

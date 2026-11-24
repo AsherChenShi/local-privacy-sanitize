@@ -18,7 +18,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 from structured_redaction import StructureError, json_parts, json_string_offsets, markdown_parts, markdown_text, splice
 
-VERSION = "0.2.5"
+VERSION = "0.2.6"
 MAX_BYTES = 2 * 1024 * 1024
 MAX_POLICY_BYTES = 256 * 1024
 MAX_MATCHES = 20000

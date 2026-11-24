@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本地隐私预检</title>
+  <link rel="stylesheet" href="/preflight.css">
+  <script defer src="/preflight.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>本地隐私预检</h1>
+      <p>在发给 AI 前，先处理一段文字或一份文件。原文在本机处理。</p>
+    </header>
+    <div class="workbench">
+      <section aria-labelledby="source-heading">
+        <div class="heading">
+          <h2 id="source-heading"><label for="source">原文</label></h2>
+          <label class="button" for="file">选择文件<input id="file" type="file" accept=".txt,.log,.json,.md"></label>
+        </div>
+        <textarea id="source" placeholder="粘贴准备发给 AI 的文字" aria-describedby="file-hint" spellcheck="false" autocorrect="off" autocapitalize="off" autocomplete="off"></textarea>
+        <p id="file-hint" class="hint">支持 UTF-8 的 TXT、LOG、JSON 和 Markdown，最多 2 MiB。</p>
+        <div class="options">
+          <label>格式<select id="format"><option value="text">普通文本</option><option value="json">JSON</option><option value="markdown">Markdown</option></select></label>
+          <label>实体词典<select id="dictionary" aria-describedby="dictionary-hint"><option value="builtin">仅使用内置规则</option><option value="codex">Codex 词典</option><option value="claude">Claude Code 词典</option></select></label>
+        </div>
+        <p id="dictionary-hint" class="hint">姓名、单位和地址等字面实体需预先配置。</p>
+        <div class="actions">
+          <button type="button" id="prepare" class="primary">生成候选</button>
+          <button type="button" id="clear">清空</button>
+        </div>
+      </section>
+      <section aria-labelledby="result-heading">
+        <div class="heading"><h2 id="result-heading"><label for="result">待复核候选</label></h2></div>
+        <textarea id="result" readonly placeholder="候选会显示在这里" spellcheck="false" autocomplete="off"></textarea>
+        <p class="hint">请确认任务需要的信息仍在，并检查规则可能漏掉的内容。</p>
+        <div class="actions">
+          <button type="button" id="copy" disabled>复制候选</button>
+          <button type="button" id="download" disabled>下载候选</button>
+        </div>
+        <p class="hint">下载会写入浏览器配置的下载位置。</p>
+      </section>
+    </div>
+    <p id="status" role="status" aria-live="polite">粘贴文字或选择文件开始。</p>
+    <div id="review" class="workbench" hidden>
+      <section><h2 id="changes-title">已替换</h2><ul id="changes"></ul></section>
+      <section><h2 id="doubts-title">待核对</h2><ul id="doubts"></ul></section>
+    </div>
+  </main>
+</body>
+</html>

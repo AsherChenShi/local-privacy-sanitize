@@ -100,6 +100,11 @@ class ClaudePluginTests(unittest.TestCase):
             "plugins/claude-privacy/scripts/signup_local.py",
             "plugins/claude-privacy/scripts/signup_mcp.py",
             "plugins/claude-privacy/scripts/privacy_status.py",
+            "plugins/claude-privacy/open-preflight.command",
+            "plugins/claude-privacy/scripts/preflight.py",
+            "plugins/claude-privacy/scripts/preflight_ui/index.html",
+            "plugins/claude-privacy/scripts/preflight_ui/preflight.css",
+            "plugins/claude-privacy/scripts/preflight_ui/preflight.js",
         }
         with zipfile.ZipFile(self.marketplace.with_suffix(".zip")) as archive:
             self.assertIsNone(archive.testzip())
@@ -120,6 +125,7 @@ class ClaudePluginTests(unittest.TestCase):
         blocked = self.submit("Contact " + CANARY)
         self.assertEqual(blocked["decision"], "block")
         self.assertIn("[EMAIL]", blocked["reason"])
+        self.assertIn("open-preflight.command", blocked["reason"])
         self.assertIs(blocked["hookSpecificOutput"]["suppressOriginalPrompt"], True)
         self.assertIsNone(self.submit("List two ways to check a service."))
         self.assertIsNone(self.submit("Contact [EMAIL_001]."))

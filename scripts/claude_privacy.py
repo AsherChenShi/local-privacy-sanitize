@@ -172,7 +172,8 @@ def decision(event_name, lane):
     elif verdict.kind == "PROTECTED_PATH":
         reason = PROTECTED_READ
     elif verdict.status == "match":
-        reason = f"{SENSITIVE} [{verdict.kind}]" if event_name == PROMPT else SENSITIVE
+        reason = (f"{SENSITIVE} [{verdict.kind}] Open open-preflight.command from the package or repository."
+                  if event_name == PROMPT else SENSITIVE)
     else:
         reason = CHECK_ERROR
     if event_name == PROMPT:

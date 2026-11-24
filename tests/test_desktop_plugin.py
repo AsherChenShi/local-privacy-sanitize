@@ -45,7 +45,9 @@ class DesktopPluginTests(unittest.TestCase):
     def test_manifest_hooks_run_from_packaged_copy(self):
         for event, field in (("UserPromptSubmit", "prompt"), ("PostToolUse", "tool_response")):
             with self.subTest(event=event):
-                self.assertEqual(self.call_hook(event, **{field: CANARY})["decision"], "block")
+                blocked = self.call_hook(event, **{field: CANARY})
+                self.assertEqual(blocked["decision"], "block")
+                self.assertEqual("open-preflight.command" in blocked["reason"], event == "UserPromptSubmit")
                 self.assertIsNone(self.call_hook(event, **{field: "合成安全文本"}))
 
     def test_plugin_switch_is_independent_of_old_terminal_mode(self):
@@ -73,9 +75,16 @@ class DesktopPluginTests(unittest.TestCase):
                 "marketplace/plugins/codex-privacy/scripts/signup_browser.py",
                 "marketplace/plugins/codex-privacy/scripts/signup_local.py",
                 "marketplace/plugins/codex-privacy/scripts/signup_mcp.py",
+                "marketplace/plugins/codex-privacy/open-preflight.command",
+                "marketplace/plugins/codex-privacy/scripts/preflight.py",
+                "marketplace/plugins/codex-privacy/scripts/preflight_ui/index.html",
+                "marketplace/plugins/codex-privacy/scripts/preflight_ui/preflight.css",
+                "marketplace/plugins/codex-privacy/scripts/preflight_ui/preflight.js",
             })
             for name in archive.namelist():
                 self.assertEqual(archive.read(name), (self.root / name).read_bytes())
+            self.assertEqual(archive.getinfo("marketplace/plugins/codex-privacy/open-preflight.command")
+                             .external_attr >> 16 & 0o777, 0o755)
 
     def test_packaged_status_does_not_create_configuration(self):
         config = self.root / "missing-config"
@@ -83,6 +92,7 @@ class DesktopPluginTests(unittest.TestCase):
                                  "codex", "--config-dir", str(config)],
                                 check=True, timeout=10, capture_output=True, text=True)
         self.assertEqual(json.loads(result.stdout)["hook_execution"], "not_verified")
+        self.assertEqual(json.loads(result.stdout)["local_preflight_window"], "python3 scripts/preflight.py")
         self.assertFalse(config.exists())
 
 

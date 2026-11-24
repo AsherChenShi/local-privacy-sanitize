@@ -6,7 +6,17 @@ Local text redaction with optional desktop plugin switches for Codex and Claude 
 
 Use macOS or Linux with Python 3.9+. The tool accepts UTF-8 `.txt`, `.log`, `.json`, and `.md` files up to 2 MiB. The fixtures are fictional. [Data flow and architecture](references/architecture.md)
 
-Both plugin bundles include an optional local email-fill lab. A separate local terminal approves the one-time action, and the model receives only status. This version supports HTTPS loopback test sites and synthetic `.invalid` addresses. [One-time email authorization lab](references/signup-lab.md)
+## Quick start
+
+Use the standalone preflight before sharing text or a file with any AI client. On macOS, double-click `open-preflight.command` in the repository or the extracted plugin directory. On macOS or Linux, you can also run:
+
+```sh
+python3 scripts/preflight.py
+```
+
+Paste text or choose a TXT, LOG, JSON, or Markdown file, then select **生成候选** (Generate candidate). Review the highlighted categories and locations, then select **复制候选** (Copy candidate) or **下载候选** (Download candidate). The window currently has Chinese labels. It uses built-in rules by default. If you already set up an entity dictionary, select the corresponding host. Close the launcher or press `Ctrl+C` to stop the local process.
+
+The standalone window works without the plugins. With either plugin enabled, you can open the same preflight after a blocked prompt and then resubmit the reviewed candidate yourself. Everyday messages do not open a window. The browser page connects only to the local process. The program does not write input or candidates to disk. Copying and downloading use the system clipboard and browser download location. [Privacy boundary](references/privacy-boundary.md#本地预检窗口) · [Usability review and implementation notes](references/personal-use-review.md)
 
 ## Install the file redaction skill
 
@@ -17,7 +27,9 @@ python3 scripts/install_skill.py --target codex
 python3 scripts/install_skill.py --target claude
 ```
 
-Run the install command for the host you want to use. The installer copies the curated skill files to `$CODEX_HOME/skills/local-privacy-sanitize` (by default `~/.codex/skills/local-privacy-sanitize`) or `~/.claude/skills/local-privacy-sanitize`. If the destination already exists, the command stops. Open a new conversation if the host has yet to discover the skill. In Codex you can invoke `$local-privacy-sanitize` directly.
+Run the install command for the host you want to use. The installer reads `CODEX_HOME` or `CLAUDE_CONFIG_DIR` and installs to `skills/local-privacy-sanitize` inside that directory. The defaults are `~/.codex` and `~/.claude`. If the destination already exists, the command stops. Open a new conversation if the host has yet to discover the skill. In Codex you can invoke `$local-privacy-sanitize` directly.
+
+The optional one-time email-fill lab supports HTTPS loopback test sites and synthetic `.invalid` addresses. [One-time email authorization lab](references/signup-lab.md)
 
 ## Switch protection in Codex Desktop
 

@@ -6,7 +6,17 @@
 
 支持 macOS/Linux、Python 3.9+ 和 UTF-8 `.txt`、`.log`、`.json`、`.md` 文件，单文件不超过 2 MiB。所有仓库示例和测试数据均为虚构。[数据流和架构](references/architecture.md)
 
-两个插件包还包含可选的本地邮箱填写实验。由本地终端一次批准，模型只收到状态。本版本限回环 HTTPS 测试站点和 `.invalid` 邮箱。[一次性邮箱授权实验](references/signup-lab.md)
+## 最快开始
+
+想在发给 AI 前处理一段文字或一份文件，可以直接打开独立预检窗口。macOS 在仓库或解压后的插件目录内双击 `open-preflight.command`，也可在 macOS/Linux 运行：
+
+```bash
+python3 scripts/preflight.py
+```
+
+粘贴文字或选择 TXT、LOG、JSON、Markdown 文件，点击「生成候选」。看定位和疑点后，用「复制候选」粘贴到聊天，或用「下载候选」另存。默认使用内置规则。已有私有词典时可选 Codex 或 Claude Code。关闭启动窗口或按 `Ctrl+C` 可停止本地程序。整个流程无需安装插件。
+
+日常希望少漏一次检查，可按下文为自己的客户端安装插件。插件拦住提示词后，从同一个预检窗口处理，再提交复核过的候选。窗口不随普通聊天弹出，不会自动发给 AI。浏览器页面只连接本地进程，原文和候选不会被程序写入文件。点击复制或下载时，候选会分别进入系统剪贴板或浏览器下载位置。[安全边界](references/privacy-boundary.md#本地预检窗口) · [易用性审查与实施日志](references/personal-use-review.md)
 
 ## 安装文件脱敏 skill
 
@@ -19,7 +29,7 @@ python3 scripts/validate_release.py
 # 默认安装到 ${CODEX_HOME:-~/.codex}/skills/local-privacy-sanitize
 python3 scripts/install_skill.py --target codex
 
-# 可选：安装到 ~/.claude/skills/local-privacy-sanitize
+# 可选：安装到 ${CLAUDE_CONFIG_DIR:-~/.claude}/skills/local-privacy-sanitize
 python3 scripts/install_skill.py --target claude
 ```
 
@@ -208,5 +218,7 @@ git diff --check
 测试验证合成样本下的预期行为，不代表真实中文资料达到某个召回率。check 与 sanitizer 共享检测规则，不是独立检测引擎。当前未验证客户端全链路拦截、真实敏感材料、未知格式凭据或通用语义等价。
 
 本地验证结果见 [VALIDATION.md](VALIDATION.md)，完整虚构示例结果见 [output.expected.txt](examples/output.expected.txt)。
+
+一次性邮箱填写仍是独立实验，仅支持回环 HTTPS 测试站点和 `.invalid` 邮箱。[实验说明](references/signup-lab.md)
 
 本仓库不预设开源许可证；公开可见不等于授予任意再分发授权。需要分发或二次开发时，请与仓库所有者确认许可。

@@ -162,7 +162,9 @@ def run_hook(config_dir, action, event, *, worker):
         return 0
     verdict = supervise(__file__, ["--config-dir", str(config_dir), action, event])
     if verdict.status == "match":
-        return block(f"{BLOCK_MATCH} [{verdict.kind}]" if event == "UserPromptSubmit" else BLOCK_MATCH)
+        if event == "UserPromptSubmit":
+            return block(f"{BLOCK_MATCH} [{verdict.kind}] 从安装包或仓库打开 open-preflight.command。")
+        return block(BLOCK_MATCH)
     if verdict.status == "timeout":
         return block(BLOCK_TIMEOUT)
     if verdict.status != "allow":
