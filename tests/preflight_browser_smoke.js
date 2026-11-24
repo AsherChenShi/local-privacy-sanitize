@@ -3,7 +3,7 @@
 
 const assert = require("node:assert/strict");
 const {spawn} = require("node:child_process");
-const {mkdtemp, readFile, rm} = require("node:fs/promises");
+const {mkdir, mkdtemp, readFile, rm, writeFile} = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
@@ -36,8 +36,13 @@ async function startup(child) {
 
 async function run() {
   const home = await mkdtemp(path.join(os.tmpdir(), "privacy-preflight-test-"));
+  const codexHome = path.join(home, "codex");
+  const dictionaryDir = path.join(codexHome, "local-privacy-sanitize");
+  await mkdir(dictionaryDir, {recursive: true});
+  await writeFile(path.join(dictionaryDir, "entities.local.json"),
+    JSON.stringify({entities: [{type: "PERSON", values: ["虚构姓名"]}]}));
   const child = spawn(process.env.PREFLIGHT_PYTHON || "python3", [script, "--no-open"], {
-    env: {...process.env, HOME: home}, stdio: ["ignore", "pipe", "inherit"]
+    env: {...process.env, HOME: home, CODEX_HOME: codexHome}, stdio: ["ignore", "pipe", "inherit"]
   });
   const stopped = new Promise(resolve => child.once("close", resolve));
   let browser;
@@ -71,6 +76,30 @@ async function run() {
     assert.equal(await result.inputValue(), "测试邮箱 [EMAIL_001]\n联系人：虚构姓名\n保持 2 次失败");
     await copy.click();
     assert.equal(await page.evaluate(() => window.testCopied), await result.inputValue());
+
+    await page.locator("#dictionary").selectOption("codex");
+    await prepare.click();
+    await page.getByRole("heading", {name: "已替换 2 处"}).waitFor();
+    await page.getByText("普通敏感类型设置", {exact: true}).click();
+    const person = page.getByRole("checkbox", {name: "姓名", exact: true});
+    await page.waitForFunction(() => !document.querySelector("#ordinary-types").disabled);
+    assert.equal(await person.isChecked(), true);
+    await person.uncheck();
+    assert.equal(await copy.isEnabled(), true);
+    await page.getByRole("button", {name: "保存类型"}).click();
+    await page.getByText("已保存到本机。", {exact: true}).waitFor();
+    assert.equal(await copy.isDisabled(), true);
+    await prepare.click();
+    await page.getByRole("heading", {name: "已替换 1 处"}).waitFor();
+    assert.equal(await result.inputValue(), "测试邮箱 [EMAIL_001]\n联系人：虚构姓名\n保持 2 次失败");
+    if (process.env.PREFLIGHT_SCREENSHOT) await page.screenshot({path: process.env.PREFLIGHT_SCREENSHOT, fullPage: true});
+    await page.reload();
+    const settings = page.getByText("普通敏感类型设置", {exact: true});
+    if (!await page.locator("#policy-panel").evaluate(panel => panel.open)) await settings.click();
+    await person.waitFor();
+    await page.waitForFunction(() => !document.querySelector("#ordinary-types").disabled);
+    assert.equal(await person.isChecked(), false);
+    assert.equal(await page.getByRole("checkbox", {name: "地址", exact: true}).isChecked(), true);
     await input.fill("new draft");
     assert.equal(await result.inputValue(), "");
     assert.equal(await copy.isDisabled(), true);
@@ -97,7 +126,6 @@ async function run() {
     await prepare.click();
     await page.getByRole("heading", {name: "已替换 1 处"}).waitFor();
     assert.equal(await page.locator("img").count(), 0);
-    if (process.env.PREFLIGHT_SCREENSHOT) await page.screenshot({path: process.env.PREFLIGHT_SCREENSHOT, fullPage: true});
     await page.setViewportSize({width: 390, height: 820});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.getByRole("button", {name: "清空"}).click();

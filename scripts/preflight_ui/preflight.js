@@ -9,6 +9,10 @@ const dictionary = get("dictionary");
 const generate = get("prepare");
 const copy = get("copy");
 const download = get("download");
+const policyPanel = get("policy-panel");
+const typeFieldset = get("ordinary-types");
+const typeOptions = [...typeFieldset.querySelectorAll("input")];
+const saveTypes = get("save-policy");
 const key = location.hash.slice(1);
 const maxBytes = 2 * 1024 * 1024;
 const fileFormats = new Map([["txt", "text"], ["log", "text"], ["json", "json"], ["md", "markdown"]]);
@@ -20,6 +24,8 @@ const errors = {
   DICTIONARY_NOT_FOUND: "未找到所选词典。可配置该宿主的实体词典，或手动选择仅使用内置规则。",
   INVALID_POLICY: "实体词典无法读取或格式有误。请先在本机修正配置。",
   INVALID_REVIEW_POLICY: "普通敏感类型配置有误。请在本机修正 review-policy.local.json。",
+  REVIEW_POLICY_CHANGED: "设置已在其他窗口更改。已重新读取，请重新选择并保存。",
+  REVIEW_POLICY_BUSY: "另一个窗口正在保存。请稍后重试。",
   SESSION_REQUIRED: "预检会话不可用。请重新启动本地预检，从终端给出的地址打开。",
   RESERVED_PLACEHOLDER_IN_INPUT: "输入已含工具保留的占位符。请使用待处理的原始文本，或单独复检已有候选。",
   LOCAL_IO_OR_DATA_ERROR: "无法读取本地数据。请检查文件权限后重试。",
@@ -30,6 +36,9 @@ const errors = {
 let generation = 0;
 let fileText = null;
 let candidate = null;
+let savedTypes = null;
+let loadingPolicy = false;
+let savingPolicy = false;
 
 function notify(message, error = false) {
   get("status").textContent = message;
@@ -42,12 +51,91 @@ function invalidate() {
   result.value = "";
   copy.disabled = true;
   download.disabled = true;
-  generate.disabled = !key;
+  generate.disabled = !key || savingPolicy;
   get("review").hidden = true;
   get("changes").replaceChildren();
   get("doubts").replaceChildren();
   return generation;
 }
+
+async function localRequest(route, body) {
+  const response = await fetch(route, {
+    method: "POST", credentials: "omit", cache: "no-store", redirect: "error",
+    headers: {"Content-Type": "application/json", "X-Preflight-Key": key},
+    body: JSON.stringify(body)
+  });
+  return {ok: response.ok, data: await response.json()};
+}
+
+function policyMessage(message, error = false) {
+  const status = get("policy-status");
+  status.textContent = message;
+  status.dataset.error = String(error);
+}
+
+function checkedTypes() {
+  return typeOptions.filter(option => option.checked).map(option => option.value).sort();
+}
+
+function fillTypes(selected) {
+  savedTypes = [...selected].sort();
+  for (const option of typeOptions) option.checked = savedTypes.includes(option.value);
+  typeFieldset.disabled = false;
+  saveTypes.disabled = true;
+}
+
+async function loadTypes() {
+  if (loadingPolicy) return;
+  savedTypes = null;
+  typeFieldset.disabled = true;
+  saveTypes.disabled = true;
+  if (!key) return policyMessage(errors.SESSION_REQUIRED, true);
+  loadingPolicy = true;
+  policyMessage("正在读取本地设置…");
+  try {
+    const {ok, data} = await localRequest("/policy/read", {});
+    if (!ok) return policyMessage(errors[data.code] || "无法读取类型设置。", true);
+    fillTypes(data.ordinary_types);
+    policyMessage("");
+  } catch {
+    policyMessage("无法读取类型设置。请确认本地预检还在运行。", true);
+  } finally {
+    loadingPolicy = false;
+  }
+}
+
+policyPanel.addEventListener("toggle", () => {
+  if (policyPanel.open && !savingPolicy) loadTypes();
+});
+typeFieldset.addEventListener("change", () => {
+  saveTypes.disabled = !savedTypes || JSON.stringify(checkedTypes()) === JSON.stringify(savedTypes);
+});
+saveTypes.addEventListener("click", async () => {
+  if (!savedTypes || savingPolicy) return;
+  const chosen = checkedTypes();
+  savingPolicy = true;
+  invalidate();
+  typeFieldset.disabled = true;
+  saveTypes.disabled = true;
+  try {
+    const {ok, data} = await localRequest("/policy/save", {ordinary_types: chosen, previous: savedTypes});
+    if (!ok) {
+      if (data.code === "REVIEW_POLICY_CHANGED") await loadTypes();
+      return policyMessage(errors[data.code] || "未保存类型设置。", true);
+    }
+    fillTypes(data.ordinary_types);
+    policyMessage("已保存到本机。");
+    notify("类型已更新，请重新生成候选。");
+  } catch {
+    await loadTypes();
+    policyMessage("未能确认保存状态。请检查当前勾选。", true);
+  } finally {
+    savingPolicy = false;
+    invalidate();
+    typeFieldset.disabled = !savedTypes;
+    saveTypes.disabled = !savedTypes || JSON.stringify(checkedTypes()) === JSON.stringify(savedTypes);
+  }
+});
 
 function clear() {
   invalidate();
@@ -97,7 +185,7 @@ file.addEventListener("change", async () => {
     file.value = "";
     notify(errors.UTF8_REQUIRED, true);
   } finally {
-    if (current === generation) generate.disabled = !key;
+    if (current === generation) generate.disabled = !key || savingPolicy;
   }
 });
 
@@ -150,14 +238,9 @@ generate.addEventListener("click", async () => {
   generate.disabled = true;
   notify("正在本机检查…");
   try {
-    const response = await fetch("/prepare", {
-      method: "POST", credentials: "omit", cache: "no-store", redirect: "error",
-      headers: {"Content-Type": "application/json", "X-Preflight-Key": key},
-      body: JSON.stringify({text, format: format.value, dictionary: dictionary.value})
-    });
-    const data = await response.json();
+    const {ok, data} = await localRequest("/prepare", {text, format: format.value, dictionary: dictionary.value});
     if (current !== generation) return;
-    if (!response.ok) {
+    if (!ok) {
       return notify(errors[data.code] || "未生成候选。请检查所选格式和原文结构，修正后重试。", true);
     }
     if (data.status !== "REVIEW_REQUIRED" || typeof data.candidate !== "string") {
@@ -174,7 +257,7 @@ generate.addEventListener("click", async () => {
   } catch {
     if (current === generation) notify("本地检查未完成。请确认预检仍在运行，再重试。", true);
   } finally {
-    if (current === generation) generate.disabled = !key;
+    if (current === generation) generate.disabled = !key || savingPolicy;
   }
 });
 

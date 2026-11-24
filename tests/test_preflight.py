@@ -1,9 +1,12 @@
 """Exercise the preflight window's shared checks and HTTP trust boundary."""
 
+from concurrent.futures import ThreadPoolExecutor
 import http.client
 import json
+import os
 from pathlib import Path
 import sys
+import subprocess
 from tempfile import TemporaryDirectory
 from threading import Thread
 import unittest
@@ -13,7 +16,8 @@ from unittest.mock import patch
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 try:
-    from preflight import MAX_BYTES, MAX_REQUEST, PreflightServer, prepare
+    from preflight import MAX_BYTES, MAX_REQUEST, PreflightServer, policy_state, prepare, save_policy
+    from review_policy import ORDINARY_TYPES, default_policy_path
     from sanitize import Rejected
 finally:
     sys.path.pop(0)
@@ -99,6 +103,62 @@ class PrepareTests(unittest.TestCase):
         self.assertEqual(len(result["changes"]), 20)
         self.assertEqual(result["candidate"].count("[EMAIL_001]"), 30)
 
+    def test_policy_save_validates_permissions_and_rejects_stale_edits(self):
+        previous = policy_state({})["ordinary_types"]
+        self.assertEqual(set(previous), ORDINARY_TYPES)
+        self.assertFalse(default_policy_path().exists())
+        self.assertEqual(save_policy({"previous": previous, "ordinary_types": ["LOCATION"]}),
+                         {"ordinary_types": ["LOCATION"]})
+        path = default_policy_path()
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+        for selected, code in ((["EMAIL"], "INVALID_REVIEW_POLICY"), (["ORG", "ORG"], "INVALID_REVIEW_POLICY"),
+                               (["PROJECT"], "REVIEW_POLICY_CHANGED")):
+            with self.subTest(selected=selected), self.assertRaisesRegex(Rejected, code):
+                save_policy({"previous": previous, "ordinary_types": selected})
+        self.assertEqual(policy_state({}), {"ordinary_types": ["LOCATION"]})
+        with patch("preflight.os.replace", side_effect=OSError("test write failure")), self.assertRaises(OSError):
+            save_policy({"previous": ["LOCATION"], "ordinary_types": ["ORG"]})
+        self.assertFalse(list(path.parent.glob(".review-policy-*")))
+        self.assertEqual(policy_state({}), {"ordinary_types": ["LOCATION"]})
+
+    def test_save_preserves_existing_invalid_or_symlinked_policy(self):
+        path = default_policy_path()
+        path.parent.mkdir(parents=True)
+        path.write_text('{"some_existing_setting":true}')
+        data = {"previous": sorted(ORDINARY_TYPES), "ordinary_types": []}
+        with self.assertRaisesRegex(Rejected, "INVALID_REVIEW_POLICY"):
+            save_policy(data)
+        self.assertEqual(path.read_text(), '{"some_existing_setting":true}')
+        path.unlink()
+        external = self.home / "unrelated.json"
+        external.write_text('{"ordinary_types":[]}')
+        path.symlink_to(external)
+        with self.assertRaisesRegex(Rejected, "INVALID_REVIEW_POLICY"):
+            save_policy(data)
+        self.assertTrue(path.is_symlink())
+        self.assertEqual(external.read_text(), '{"ordinary_types":[]}')
+
+    def test_both_prompt_hooks_read_the_saved_policy_with_high_sensitivity_enforced(self):
+        for host, env_name, args in (("codex", "CODEX_HOME", ["plugin-hook", "UserPromptSubmit"]),
+                                    ("claude", "CLAUDE_CONFIG_DIR", ["UserPromptSubmit"])):
+            root = self.home / host
+            entities = root / "local-privacy-sanitize/entities.local.json"
+            entities.parent.mkdir(parents=True)
+            entities.write_text('{"entities":[{"type":"PERSON","values":["样本姓名"]}]}', encoding="utf8")
+            for chosen, source, blocked in (([], "样本姓名", False), (["PERSON"], "样本姓名", True),
+                                            ([], f"样本姓名 / {EMAIL}", True),
+                                            ([], '{"idToken":"synthesized-token"}', True)):
+                save_policy({"previous": policy_state({})["ordinary_types"], "ordinary_types": chosen})
+                result = subprocess.run([sys.executable, str(SCRIPTS / (host + "_privacy.py")), *args],
+                                        env={**os.environ, "HOME": str(self.home), env_name: str(root)},
+                                        input=json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": source}),
+                                        capture_output=True, text=True, timeout=10, check=True)
+                self.assertEqual(bool(result.stdout), blocked, (host, chosen))
+                if blocked:
+                    self.assertEqual(json.loads(result.stdout)["decision"], "block")
+                    self.assertNotIn(EMAIL, result.stdout + result.stderr)
+
 
 class LoopbackTests(unittest.TestCase):
     @classmethod
@@ -156,6 +216,33 @@ class LoopbackTests(unittest.TestCase):
             self.assertEqual(status, 422)
             self.assertNotIn(EMAIL.encode(), reply)
             self.assertNotIn("candidate", json.loads(reply))
+
+    def test_policy_endpoints_require_same_origin_key_and_limit_request_shape(self):
+        with TemporaryDirectory() as folder, patch("preflight.Path.home", return_value=Path(folder)):
+            status, _, reply = self.request("POST", "/policy/read", "{}")
+            self.assertEqual(status, 200)
+            previous = json.loads(reply)["ordinary_types"]
+            body = json.dumps({"ordinary_types": [], "previous": previous})
+            self.assertEqual(self.request("POST", "/policy/save", body, Origin="https://remote.invalid")[0], 403)
+            self.assertEqual(self.request("POST", "/policy/save", body, **{"X-Preflight-Key": "wrong"})[0], 403)
+            self.assertEqual(self.request("POST", "/policy/save", body, **{"Content-Length": "4097"})[0], 413)
+            self.assertFalse(default_policy_path().exists())
+            status, _, reply = self.request("POST", "/policy/save", body)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(reply), {"ordinary_types": []})
+            status, _, reply = self.request("POST", "/policy/save", body)
+            self.assertEqual(status, 409)
+            self.assertEqual(json.loads(reply), {"code": "REVIEW_POLICY_CHANGED"})
+            self.assertEqual(self.request("POST", "/policy/read", json.dumps({"path": "config.json"}))[0], 422)
+            def save_new_selection(kind):
+                data = json.dumps({"ordinary_types": [kind], "previous": []})
+                status, _, reply = self.request("POST", "/policy/save", data)
+                return status, json.loads(reply)
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = sorted(pool.map(save_new_selection, ("ORG", "LOCATION")))
+            self.assertEqual([status for status, _ in results], [200, 409])
+            self.assertEqual(policy_state({}), results[0][1])
 
 
 if __name__ == "__main__":

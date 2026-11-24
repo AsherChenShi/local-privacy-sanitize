@@ -2,17 +2,21 @@
 """Open an independent, loopback-only privacy preflight in a local browser."""
 
 import argparse
+import fcntl
 from hmac import compare_digest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import secrets
+import stat
 import sys
+import tempfile
 import webbrowser
 
 from hook_supervisor import load_strict_json
-from review_policy import ReviewPolicyError, find_doubts, load_review_policy, select_entities
+from review_policy import (POLICY_LIMIT, ReviewPolicyError, default_policy_path, find_doubts,
+                           load_review_policy, ordinary_type_selection, select_entities)
 from review_preview import TYPE_LABELS
 from sanitize import ARTIFACTS, MAX_BYTES, MAX_POLICY_BYTES, Rejected, parse_policy, preview_rows, read_local, sanitize
 
@@ -29,6 +33,55 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'se
        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
 
+def read_ordinary_types():
+    try:
+        return load_review_policy(read_local=read_local)
+    except ReviewPolicyError:
+        raise Rejected("INVALID_REVIEW_POLICY") from None
+
+
+def policy_state(payload):
+    if payload != {}:
+        raise Rejected("INVALID_REQUEST")
+    return {"ordinary_types": sorted(read_ordinary_types())}
+
+
+def save_policy(payload):
+    if not isinstance(payload, dict) or set(payload) != {"ordinary_types", "previous"}:
+        raise Rejected("INVALID_REQUEST")
+    try:
+        selected = ordinary_type_selection(payload["ordinary_types"])
+        previous = ordinary_type_selection(payload["previous"])
+    except ReviewPolicyError:
+        raise Rejected("INVALID_REVIEW_POLICY") from None
+
+    path = default_policy_path()
+    path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
+    lock_fd = os.open(path.with_suffix(".lock"), flags, 0o600)
+    with os.fdopen(lock_fd, "rb") as lock:
+        if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
+            raise Rejected("INVALID_REVIEW_POLICY")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Rejected("REVIEW_POLICY_BUSY") from None
+        if read_ordinary_types() != previous:
+            raise Rejected("REVIEW_POLICY_CHANGED")
+        result = {"ordinary_types": sorted(selected)}
+        fd, name = tempfile.mkstemp(prefix=".review-policy-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(result, stream, indent=2)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(name, path)
+        finally:
+            Path(name).unlink(missing_ok=True)
+    return result
+
+
 def prepare(payload):
     """Use the existing redactor without writing source, candidate or diagnostic files."""
     if not isinstance(payload, dict) or set(payload) != {"text", "format", "dictionary"}:
@@ -42,10 +95,7 @@ def prepare(payload):
     if not source.strip():
         raise Rejected("EMPTY_INPUT")
 
-    try:
-        ordinary_types = load_review_policy(read_local=read_local)
-    except ReviewPolicyError:
-        raise Rejected("INVALID_REVIEW_POLICY") from None
+    ordinary_types = read_ordinary_types()
     entities = ()
     if dictionary != "builtin":
         variable, default = HOST_SETTINGS[dictionary]
@@ -103,7 +153,8 @@ class PreflightHandler(BaseHTTPRequestHandler):
         self.respond(200, *asset)
 
     def do_POST(self):
-        if self.path != "/prepare":
+        action = {"/prepare": prepare, "/policy/read": policy_state, "/policy/save": save_policy}.get(self.path)
+        if action is None:
             return self.reply_json(404, {"code": "NOT_FOUND"})
         key = self.header("X-Preflight-Key")
         if (self.header("Host") != self.server.authority or self.header("Origin") != self.server.origin
@@ -114,15 +165,17 @@ class PreflightHandler(BaseHTTPRequestHandler):
                 or not length.isascii() or not length.isdecimal() or len(length) > 8):
             return self.reply_json(400, {"code": "INVALID_REQUEST"})
         size = int(length)
-        if size > MAX_REQUEST:
+        if size > (MAX_REQUEST if action is prepare else POLICY_LIMIT):
             return self.reply_json(413, {"code": "FILE_TOO_LARGE"})
         try:
             raw = self.rfile.read(size)
             if len(raw) != size:
                 raise Rejected("INVALID_REQUEST")
-            result = prepare(load_strict_json(raw))
+            result = action(load_strict_json(raw))
         except Rejected as error:
-            return self.reply_json(422, {"code": str(error)})
+            code = str(error)
+            return self.reply_json(409 if code in {"REVIEW_POLICY_BUSY", "REVIEW_POLICY_CHANGED"} else 422,
+                                   {"code": code})
         except (ValueError, RecursionError):
             return self.reply_json(400, {"code": "INVALID_REQUEST"})
         except (OSError, TimeoutError):

@@ -131,7 +131,9 @@ The page lists replacements and items to review. Filter replacements by sensitiv
 
 ### Configure standard sensitivity categories
 
-The independent preflight redacts detected high-sensitivity matches. Configured people, organizations, locations, and projects are also redacted by default. To customize standard categories, save the types to redact in `~/.config/local-privacy-sanitize/review-policy.local.json`. For example, `{"ordinary_types":["PERSON","LOCATION"]}` redacts configured people and locations and keeps matches found only under organizations or projects. The preflight and both enabled hooks read this shared setting. Regular chats use the host's existing allow and block behavior.
+Open **普通敏感类型设置** (Standard sensitivity settings) in the preflight window, choose the dictionary categories to redact, and select **保存类型** (Save categories). All four categories start enabled. The preflight and both enabled hooks read the shared setting on the next check. High-sensitivity rules are always applied. Saving clears the current candidate so you can regenerate it using the new selection.
+
+You can also edit `~/.config/local-privacy-sanitize/review-policy.local.json` directly. For example, `{"ordinary_types":["PERSON","LOCATION"]}` redacts configured people and locations and keeps matches found only under organizations or projects.
 
 To use another policy for a single preflight, pass the same `--review-policy PATH` to `sanitize` and `check`. That argument applies to the CLI, and the hooks continue to use the shared policy. Preview filters only change the visible list. Retained standard categories are summarized once. [Policy file and high-sensitivity boundary](references/privacy-boundary.md#本地预览和敏感级别)
 

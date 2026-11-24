@@ -146,7 +146,9 @@ python3 scripts/sanitize.py sanitize --input private/request.json \
 
 ### 设置普通敏感类型
 
-本地预检会替换命中的高敏项目。姓名、组织、地点和项目这四类已配置的实体默认也会替换。如果有经判断可保留的类型，在 `~/.config/local-privacy-sanitize/review-policy.local.json` 写入要替换的普通类型。例如 `{"ordinary_types":["PERSON","LOCATION"]}` 会继续替换已配置的姓名和地点，保留仅按组织、项目类型命中的内容。保存一次即可供本地预检和两个已启用的 Hook 使用。普通聊天保持原有的放行或拦截流程。
+在本地预检窗口展开「普通敏感类型设置」，勾选希望替换的词典类型，再点击「保存类型」。姓名、组织、地址和项目默认全选。保存一次，下一次预检和 Codex、Claude Code 已启用的 Hook 都会读取。高敏规则始终执行。已有候选在保存后会清空，需要重新生成。
+
+也可以直接编辑 `~/.config/local-privacy-sanitize/review-policy.local.json`。例如 `{"ordinary_types":["PERSON","LOCATION"]}` 会继续替换已配置的姓名和地址，保留仅按组织、项目类型命中的内容。
 
 如果某次独立预检要使用另一份配置，在 `sanitize` 和 `check` 上均传入相同的 `--review-policy PATH`。该参数只覆盖本地命令，宿主仍读取共享配置。页面筛选只影响当前看到的条目。未选中替换的普通类型集中提示一次。[配置文件和高敏边界](references/privacy-boundary.md#本地预览和敏感级别)
 
@@ -218,6 +220,8 @@ git diff --check
 测试验证合成样本下的预期行为，不代表真实中文资料达到某个召回率。check 与 sanitizer 共享检测规则，不是独立检测引擎。当前未验证客户端全链路拦截、真实敏感材料、未知格式凭据或通用语义等价。
 
 本地验证结果见 [VALIDATION.md](VALIDATION.md)，完整虚构示例结果见 [output.expected.txt](examples/output.expected.txt)。
+
+运行 `python3 tests/test_privacy_corpus.py` 可查看版本化合成样本的拦截、脱敏与复核提示结果。输出仅包含用例编号和统计，详见[实现与评测记录](references/personal-use-review.md#027-规则评测与类型设置)。
 
 一次性邮箱填写仍是独立实验，仅支持回环 HTTPS 测试站点和 `.invalid` 邮箱。[实验说明](references/signup-lab.md)
 

@@ -18,7 +18,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 from structured_redaction import StructureError, json_parts, json_string_offsets, markdown_parts, markdown_text, splice
 
-VERSION = "0.2.6"
+VERSION = "0.2.7"
 MAX_BYTES = 2 * 1024 * 1024
 MAX_POLICY_BYTES = 256 * 1024
 MAX_MATCHES = 20000
@@ -170,7 +170,7 @@ RULES = [
     ("SECRET", re.compile(r"\bBearer[ \t]+(?P<value>[A-Za-z0-9._~+/-]+={0,2})", re.I), 100),
     ("ACCOUNT", re.compile(r"(?:银行卡|卡号|账号|账户|工号|证件号)[\"']?[ \t]*[:=：][ \t]*[\"']?(?P<value>[A-Za-z0-9][A-Za-z0-9_-]{2,})"), 60),
 ]
-SECRET_NAMES = (r"api[_ -]?key|private[_ -]?key|(?:access|refresh|auth|service)[_ -]?token|"
+SECRET_NAMES = (r"(?:x[-_])?api[_ -]?key|private[_ -]?key|(?:access|refresh|auth|service|session|id)[_ -]?token|"
                 r"client[_ -]?secret|password|passwd|secret|密码|口令|密钥|令牌")
 AUTH_HEADERS = r"(?:proxy[-_ ])?authorization|(?:set[-_ ])?cookie"
 SECRET_FIELD = re.compile(rf"(?:{SECRET_NAMES}|{AUTH_HEADERS})", re.I)
@@ -202,6 +202,12 @@ DOC_PATHS = {
     "genai.owasp.org": ("/llmrisk",),
     "csrc.nist.gov": ("/pubs",),
     "presidio.dataprivacystack.org": ("/",),
+}
+# These additions accept documentation paths without query parameters.
+REFERENCE_PATHS = {
+    "docs.docker.com": ("/reference", "/engine/reference"),
+    "kubernetes.io": ("/docs",),
+    "git-scm.com": ("/docs",),
 }
 GITHUB_RESOURCE = {
     "actions", "blob", "blame", "branches", "commit", "commits", "compare",
@@ -354,11 +360,11 @@ def public_url_candidate(url):
     if any(_decoded_url_pii(value) for value in encoded_values):
         return False
 
-    if authority in DOC_PATHS:
-        if not any(prefix == "/" or path == prefix or path.startswith(prefix + "/")
-                   for prefix in DOC_PATHS[authority]):
+    if authority in DOC_PATHS or authority in REFERENCE_PATHS:
+        prefixes = DOC_PATHS.get(authority) or REFERENCE_PATHS[authority]
+        if not any(prefix == "/" or path == prefix or path.startswith(prefix + "/") for prefix in prefixes):
             return False
-        permitted = dict.fromkeys(DOC_QUERY, QUERY_SLUG)
+        permitted = {} if authority in REFERENCE_PATHS else dict.fromkeys(DOC_QUERY, QUERY_SLUG)
     elif authority in {"github.com", "api.github.com", "raw.githubusercontent.com", "avatars.githubusercontent.com"}:
         if not github_public_path(authority, path):
             return False

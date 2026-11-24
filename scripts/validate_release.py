@@ -33,6 +33,7 @@ def validate(root):
         "scripts/preflight.py", "scripts/preflight_ui/index.html", "scripts/preflight_ui/preflight.js",
         "scripts/preflight_ui/preflight.css", "open-preflight.command", "tests/test_preflight.py",
         "tests/preflight_browser_smoke.js", "references/personal-use-review.md",
+        "tests/test_privacy_corpus.py", "tests/privacy_corpus.json",
         ".github/workflows/ci.yml",
     )
     for relative in required:
@@ -83,7 +84,7 @@ def validate(root):
         "scripts/structured_redaction.py": {"bisect", "html"},
         "scripts/review_policy.py": {"bisect"},
         "scripts/review_preview.py": {"base64"},
-        "scripts/preflight.py": {"hmac", "http", "secrets", "webbrowser"},
+        "scripts/preflight.py": {"fcntl", "hmac", "http", "secrets", "tempfile", "webbrowser"},
     }
     for relative in ("scripts/sanitize.py", "scripts/claude_privacy.py", "scripts/privacy_status.py",
                      "scripts/structured_redaction.py", "scripts/hook_supervisor.py",

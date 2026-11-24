@@ -14,7 +14,7 @@ LABELS = {
     "住址": "LOCATION", "收货地址": "LOCATION", "客户地址": "LOCATION",
     "内部项目": "PROJECT", "customer name": "PERSON", "contact name": "PERSON",
     "recipient": "PERSON", "home address": "LOCATION", "shipping address": "LOCATION",
-    "internal project": "PROJECT",
+    "internal project": "PROJECT", "shippingaddress": "LOCATION", "contact_name": "PERSON",
 }
 PLACEHOLDER_ONLY = re.compile(r"\[(?:PERSON|ORG|LOCATION|PROJECT|ACCOUNT|SENSITIVE|URL|EMAIL|CNID|PHONE|SSN|SECRET|CARD|IP)_[0-9]{3,6}\]")
 EMPTY_VALUES = {"", "-", "—", "--", "…", "...", "无", "不适用", "未填写", "未知", "n/a", "none", "unknown", "redacted"}
@@ -46,7 +46,10 @@ def parse_review_policy(text):
         raise ReviewPolicyError("INVALID_REVIEW_POLICY") from None
     if not isinstance(data, dict) or set(data) != {"ordinary_types"}:
         raise ReviewPolicyError("INVALID_REVIEW_POLICY")
-    chosen = data["ordinary_types"]
+    return ordinary_type_selection(data["ordinary_types"])
+
+
+def ordinary_type_selection(chosen):
     if (not isinstance(chosen, list) or len(chosen) > len(ORDINARY_TYPES)
             or any(type(kind) is not str or kind not in ORDINARY_TYPES for kind in chosen)
             or len(set(chosen)) != len(chosen)):
@@ -54,9 +57,12 @@ def parse_review_policy(text):
     return frozenset(chosen)
 
 
+def default_policy_path():
+    return Path.home() / ".config" / "local-privacy-sanitize" / "review-policy.local.json"
+
+
 def load_review_policy(path=None, *, read_local):
-    source = (Path.home() / ".config" / "local-privacy-sanitize" / "review-policy.local.json"
-              if path is None else Path(path).expanduser())
+    source = default_policy_path() if path is None else Path(path).expanduser()
     try:
         text = read_local(source, POLICY_LIMIT, {".json"})
     except FileNotFoundError:

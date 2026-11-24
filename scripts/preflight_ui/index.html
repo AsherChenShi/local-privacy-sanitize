@@ -43,6 +43,19 @@
       </section>
     </div>
     <p id="status" role="status" aria-live="polite">粘贴文字或选择文件开始。</p>
+    <details id="policy-panel">
+      <summary>普通敏感类型设置</summary>
+      <p class="hint">勾选需要替换的词典类型。保存后预检和两端已启用的检查都会读取。邮箱、证件号、凭据等高敏规则始终执行。</p>
+      <fieldset id="ordinary-types" disabled>
+        <legend>替换词典中的</legend>
+        <label><input type="checkbox" value="PERSON"> 姓名</label>
+        <label><input type="checkbox" value="ORG"> 组织</label>
+        <label><input type="checkbox" value="LOCATION"> 地址</label>
+        <label><input type="checkbox" value="PROJECT"> 项目</label>
+      </fieldset>
+      <button type="button" id="save-policy" disabled>保存类型</button>
+      <p id="policy-status" role="status" aria-live="polite"></p>
+    </details>
     <div id="review" class="workbench" hidden>
       <section><h2 id="changes-title">已替换</h2><ul id="changes"></ul></section>
       <section><h2 id="doubts-title">待核对</h2><ul id="doubts"></ul></section>

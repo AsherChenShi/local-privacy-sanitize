@@ -36,7 +36,7 @@ Markdown 支持常见行内链接、表格和代码围栏。扫描时按可识�
 
 ## 本地预检窗口
 
-窗口使用系统浏览器和本地 Python 进程。进程只监听随机端口的 `127.0.0.1`，页面仅能向同源发起请求。生成端点要求准确的 Host、Origin 和独立的临时会话密钥。会话密钥放在启动地址的 URL 片段中，浏览器读取后通过请求头传递。窗口和程序日志都不保存材料内容，也不写候选文件。浏览器策略禁止加载外部资源，页面把候选作为纯文本显示。
+窗口使用系统浏览器和本地 Python 进程。进程只监听随机端口的 `127.0.0.1`，页面仅能向同源发起请求。生成候选、读取和保存设置都要求准确的 Host、Origin 和临时会话密钥。会话密钥放在启动地址的 URL 片段中，浏览器读取后通过请求头传递。窗口和程序日志都不保存材料内容，也不写候选文件。浏览器策略禁止加载外部资源，页面把候选作为纯文本显示。
 
 请在本机直接操作窗口。只在确认后按需复制或下载，剪贴板与下载文件由操作系统和浏览器管理。受信任的本机浏览器、扩展和同账户进程仍属于本地信任边界。关闭启动终端或按 `Ctrl+C` 停止服务，不需要改变客户端插件状态。
 
@@ -46,11 +46,11 @@ Markdown 支持常见行内链接、表格和代码围栏。扫描时按可识�
 
 在 `sanitize` 上使用 `--preview` 会在私有输出目录内生成权限为 `0600` 的 `review.html`。替换列表使用实际编辑在原文中的位置，疑点使用候选中的位置。页面只保存定位、类别、占位符、疑点原因等元数据，以及用于校验候选的 SHA-256。原文、候选正文和本机路径不写入预览。只有用户明确选择同一批次的候选时，页面才在浏览器本地读取该文件并显示所选位置附近的内容。疑点相关的内容默认遮盖。文件哈希不符时请重新生成预览。页面无需外部资源或网络服务。
 
-待核对只提示有限的可定位线索，例如「客户姓名」「收货地址」和「内部项目」字段仍有未遮盖的值。按配置保留的字段如果有明确标签，也可能成为疑点。结合任务和材料范围判断是否发送。替换位置和类别本身也可能敏感，预览和候选一起留在本地。页面不记录审批结果，`REVIEW_REQUIRED` 的含义不变。
+待核对只提示有限的可定位线索，例如「客户姓名」「收货地址」「内部项目」、`contact_name` 和 `shippingAddress` 字段仍有未遮盖的值。按配置保留的字段如果有明确标签，也可能成为疑点。结合任务和材料范围判断是否发送。替换位置和类别本身也可能敏感，预览和候选一起留在本地。页面不记录审批结果，`REVIEW_REQUIRED` 的含义不变。
 
 独立预检中的高敏类型包括命中的凭据、证件号码、支付卡、账号、邮箱、电话、IP、敏感链接，以及词典中标为 `SENSITIVE` 的实体。能安全替换时直接替换。遇到无法安全处理的结构时，程序拒绝生成候选。可由用户配置的普通敏感类型是实体词典中的 `PERSON`、`ORG`、`LOCATION`、`PROJECT`，默认全选替换。这是工具的操作分级。按业务或组合信息判断需要始终处理的姓名、地点等，可以在本地词典中直接标为 `SENSITIVE`。
 
-将要替换的普通类型名称写入 `~/.config/local-privacy-sanitize/review-policy.local.json`。
+在预检窗口展开「普通敏感类型设置」并点击保存，会在本机写入 `~/.config/local-privacy-sanitize/review-policy.local.json`。配置文件只保存类型代号。程序先校验旧配置，再以原子替换写入权限为 `0600` 的新文件。另一个预检窗口先修改时，需要重新读取后再保存。遇到无效或符号链接指向的配置，窗口提示在本地修正并保留原文件。也可以手动使用以下格式。
 
 ```json
 {"ordinary_types":["PERSON","ORG","LOCATION","PROJECT"]}
@@ -66,6 +66,7 @@ Markdown 支持常见行内链接、表格和代码围栏。扫描时按可识�
 | --- | --- |
 | `github.com`、`api.github.com` | 常见账号或仓库页、限定仓库资源和 API 路径。API 响应中的部分 `{/sha}` 形式 URI 模板也可通过。查询只接受符合格式的 `head_sha`、`page`、`per_page`、`plain`、`sha`、`tab` |
 | `raw.githubusercontent.com`、`avatars.githubusercontent.com` | 原始文件路径不带查询。头像仅限数字用户 ID 和可选的数字 `v` 参数 |
+| `docs.docker.com`、`kubernetes.io`、`git-scm.com` | Docker 的 `/reference`、`/engine/reference`，Kubernetes 和 Git 的 `/docs`。这些路径不允许查询参数 |
 | 明确列出的文档主机 | 必须符合对应文档路径前缀。查询只接受 `api-version`、`lang`、`locale`、`site_variant`、`surface`、`translationFallback`、`trk`、`version`、`view` 及符合格式的值 |
 
 文档来源包括 GitHub Docs，OpenAI 的 Learn、Developers、Platform 和 Help，Claude Code、Anthropic Docs 和 Claude Platform，以及 Python、MDN、Microsoft Learn、OWASP、NIST、Presidio 的指定文档路径。完整主机、路径和参数限制以 [检测代码](../scripts/sanitize.py) 为准。
